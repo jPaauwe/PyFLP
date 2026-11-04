@@ -104,8 +104,21 @@ class PlaylistEvent(ListEventBase):
     SIZES = [60, 80, 32]
     """Fallback order (when :attr:`PATTERN_BASE` isn't found) is kept backwards compatible."""
 
-    def __init__(self, id: EventEnum, data: bytes) -> None:
-        super().__init__(id, data, size=self.detect_item_size(data))
+    def __init__(self, id: EventEnum, data: bytes, size: int | None = None) -> None:
+        super().__init__(id, data, size=size or self.detect_item_size(data))
+
+    @staticmethod
+    def size_for_version(major: int) -> int:
+        """The record size FL Studio ``major`` writes (for a new, empty event).
+
+        An empty event carries no records to detect the size from, and a wrong
+        guess makes FL misread every clip added to it.
+        """
+        if major >= 24:
+            return 80
+        if major >= 21:
+            return 60
+        return 32
 
     def _detect_struct_size(self, data: bytes) -> int | None:
         return self._kwds["size"] if not len(data) % self._kwds["size"] else None

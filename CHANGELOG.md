@@ -71,6 +71,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `pyflp.tools.edit.add_clip` on a project without clips wrote FL 21 sized
+  (60 byte) playlist records whatever the version, so FL Studio 20 showed
+  one garbled clip and dropped the rest (and FL 2024+ expected 80 bytes).
+  The size of a new or empty playlist event now follows the project's FL
+  version (`PlaylistEvent.size_for_version`). Verified by opening the
+  edited project in FL Studio 20.7.2.
 - Mixer parameters (insert volume, pan, stereo separation, EQ and slot
   enabled / mix) of FL Studio 2024+ projects were read from wrong inserts.
 - VST plugin data of FL Studio 9, 21 and 2024+ (markers 6, 9, 11, 12) wasn't

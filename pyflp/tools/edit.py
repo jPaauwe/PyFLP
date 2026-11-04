@@ -859,8 +859,13 @@ def _max_track_idx(project: Project) -> int:
 def _playlist(project: Project, arrangement: int | str, create: bool = False) -> PlaylistEvent | None:
     arr = get_arrangement(project, arrangement)
     event = _first(arr.events, ArrangementID.Playlist)
+    size = PlaylistEvent.size_for_version(project.version.major)
+    if event is not None and create and not len(event) and not event._trailing:
+        # An empty event has no records to detect the size from (FL 20 saves
+        # one in every new project); use the size this FL version writes.
+        event._kwds["size"] = event._struct_size = size
     if event is None and create:
-        event = PlaylistEvent(ArrangementID.Playlist, b"")
+        event = PlaylistEvent(ArrangementID.Playlist, b"", size=size)
         anchor = _first(arr.events, ArrangementID.Name) or arr.events.first(ArrangementID.New)
         arr.events.insert_after(anchor, event)
     return event  # type: ignore[return-value]

@@ -326,3 +326,41 @@ def test_streams_and_dumps():
     out = io.BytesIO()
     pyflp.save(project, out)
     assert out.getvalue() == raw == pyflp.dumps(project)
+
+@pytest.mark.parametrize(
+    ("path", "size"),
+    [(FL20, 32), (FL25 / "base_one_channel.flp", 80)],
+    ids=["fl20", "fl25"],
+)
+def test_add_clip_to_empty_playlist_uses_version_record_size(
+    path: pathlib.Path, size: int, tmp_path: pathlib.Path
+):
+    """An empty playlist event has no records to detect the size from.
+
+    Clips added to it were written as 60 byte (FL 21) records whatever the
+    version, which FL 20 opened as one garbled clip and dropped the rest.
+    Found by opening an edited project in FL Studio 20.7.2.
+    """
+    from pyflp.arrangement import ArrangementID
+
+    project = pyflp.parse(path)
+    edit.remove_clips(project, start=0)
+    iid = edit.create_pattern(project, "P", [{"key": 60, "position": 0, "length": 96}])
+    edit.add_clip(project, 1, 0, pattern=iid)
+    edit.add_clip(project, 2, 1536, pattern=iid)
+    out = tmp_path / "clips.flp"
+    pyflp.save(project, out)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # no unparsed trailing bytes
+        reparsed = pyflp.parse(out)
+    events = [e for a in reparsed.arrangements for e in a.events if e.id == ArrangementID.Playlist]
+    assert events[0]._kwds["size"] == size
+    assert len(bytes(events[0].STRUCT.build(events[0].value, **events[0]._kwds))) == 2 * size
+    assert [c["position"] for c in edit.list_clips(reparsed)] == [0, 1536]
+
+
+def test_playlist_size_for_version():
+    from pyflp.arrangement import PlaylistEvent
+
+    assert [PlaylistEvent.size_for_version(v) for v in (12, 20, 21, 23, 24, 25)] == [32, 32, 60, 60, 80, 80]
