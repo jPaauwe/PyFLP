@@ -30,5 +30,15 @@ Copyright (c) 2026 Roman Pronskiy):
   programs (for e.g. an MCP server).
 * :mod:`pyflp.tools.cli` - the ``flpdiff`` command line interface.
 
+Ported from `flcli <https://github.com/s4k10503/flcli>`_ (MIT License,
+Copyright (c) 2026 0y0):
+
+* :mod:`pyflp.tools.refs` - address a channel, pattern or insert by index,
+  name or a substring of its name.
+* :mod:`pyflp.tools.snapshot` - compare two state snapshots and assert that
+  a batch of edits produced what it meant to.
+* :mod:`pyflp.tools.midi` - read and write Standard MIDI Files without an
+  extra dependency, and convert notes to and from FL Studio ticks.
+
 .. versionadded:: 2.3.0
 """

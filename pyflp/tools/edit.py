@@ -93,6 +93,9 @@ __all__ = [
     "reverse_notes",
     "invert_notes",
     "scale_velocities",
+    "shift_notes",
+    "stretch_notes",
+    "update_note",
     "create_pattern",
     "clone_pattern",
     "get_arrangement",
@@ -692,6 +695,99 @@ def scale_velocities(
             n["velocity"] = min(128, max(1, round(n["velocity"] * factor + offset)))
 
     return _edit_notes(project, pattern, edit, **filters)
+
+
+def shift_notes(project: Project, pattern: int | str, ticks: int, **filters: Any) -> int:
+    """Moves notes ``ticks`` earlier (negative) or later (positive).
+
+    Positions are clamped at 0, so shifting a note before the start of the
+    pattern parks it on the first tick instead of dropping it.
+    """
+
+    def edit(notes: list[Any], selected: list[Any]) -> None:
+        for n in selected:
+            n["position"] = max(0, n["position"] + ticks)
+
+    return _edit_notes(project, pattern, edit, **filters)
+
+
+def stretch_notes(
+    project: Project, pattern: int | str, factor: float, **filters: Any
+) -> int:
+    """Multiplies the length of notes by ``factor``; starts stay put.
+
+    Use ``factor=0.5`` to halve every note (legato -> staccato) and ``2.0``
+    to double it; a note is never shorter than one tick.
+    """
+    _check(factor, 0.01, 100.0, "Factor")
+
+    def edit(notes: list[Any], selected: list[Any]) -> None:
+        for n in selected:
+            n["length"] = max(1, round(n["length"] * factor))
+
+    return _edit_notes(project, pattern, edit, **filters)
+
+
+_NOTE_FIELDS = (
+    "key",
+    "position",
+    "length",
+    "velocity",
+    "pan",
+    "release",
+    "fine_pitch",
+    "mod_x",
+    "mod_y",
+    "slide",
+    "group",
+)
+
+
+def _with_flag(current: Any, bit: int, on: bool) -> Any:
+    """Sets or clears ``bit`` of a flag value, keeping its enum type."""
+    raw = int(current)
+    value = (raw | bit) if on else (raw & ~bit)
+    try:
+        return type(current)(value)
+    except (TypeError, ValueError):  # pragma: no cover - plain ints
+        return value
+
+
+def update_note(
+    project: Project,
+    pattern: int | str,
+    index: int,
+    **fields: Any,
+) -> int:
+    """Sets fields of a single note, addressed by its index in the pattern.
+
+    Only the fields passed are changed; ``slide`` is a ``bool`` and the rest
+    are the same units :func:`get_notes` returns. Returns ``1`` when the note
+    was found.
+
+    Raises:
+        EditError: ``index`` is out of range, or a field name is unknown.
+    """
+    unknown = set(fields) - set(_NOTE_FIELDS)
+    if unknown:
+        raise EditError("INVALID_ARGS", f"Unknown note field(s): {sorted(unknown)}")
+
+    event = _notes_event(project, get_pattern(project, pattern))
+    if event is None:
+        raise EditError("NOT_FOUND", "The pattern has no notes")
+    notes = list(event)
+    if not 0 <= index < len(notes):
+        raise EditError(
+            "NOT_FOUND", f"No note at index {index} (the pattern has {len(notes)})"
+        )
+    target = notes[index]
+    for name, value in fields.items():
+        if name == "slide":
+            target["flags"] = _with_flag(target["flags"], 8, bool(value))
+        else:
+            target[name] = value
+    _store_notes(event, notes)
+    return 1
 
 
 def clone_pattern(project: Project, pattern: int | str, name: str | None = None) -> int:

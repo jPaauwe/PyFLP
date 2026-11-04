@@ -12,6 +12,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `pyflp.live`, a client for controlling a *running* FL Studio over two
+  virtual MIDI ports (needs the new `live` extra: `pip install pyflp[live]`).
+  Ported from [flcli](https://github.com/s4k10503/flcli):
+  - `protocol`: the `F0 7D 02 <rid> <packed JSON> F7` wire format, including
+    the 7 bits to 8 bits packing.
+  - `commands`: a typed builder per device command (transport, tempo,
+    patterns, channels, step sequencer, mixer, plugins, state).
+  - `client.Client`: a synchronous, typed API, plus `connect`, `ping`,
+    `snapshot`, `doctor` and `batch`.
+  - `transport`: `mido` backed MIDI ports, JSONL recording and hardware free
+    replay.
+  - `device`: the FL Studio controller script and the piano roll import /
+    export scripts, with an installer for FL Studio's settings folder.
+  - `api`: a catalogue of FL Studio's own scripting API, 422 functions across
+    14 modules, generated from the `flstudio-scripting` reference documents of
+    [delorenj/skills](https://github.com/delorenj/skills).
+  - The `pyflp-live` command line program (`ports`, `ping`, `doctor`,
+    `snapshot`, `batch`, `send`, `device-install`, `api`, ...). It emits one
+    JSON envelope per call and exits with a stable code per error.
+- `pyflp.tools.refs`: address a channel, pattern or mixer insert by index,
+  exact name or case insensitive substring, with an error (instead of a coin
+  flip) when a name is ambiguous.
+- `pyflp.tools.snapshot`: dotted path access, `diff_snapshots`, and an
+  assertion engine (`eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`) which
+  runs on live snapshots and on `snapshot_from_project` alike.
+- `pyflp.tools.midi`: read and write Standard MIDI Files without an extra
+  dependency, and convert notes to FL Studio note specs (`to_note_specs`).
+- `pyflp.tools.edit`: `shift_notes`, `stretch_notes` and `update_note`.
+- The `flpdiff` CLI gained `snapshot`, `assert`, `midi` and `api` subcommands;
+  the `bridge` gained `snapshot`, `diff_state`, `assert_state`, `midi_notes`,
+  `resolve`, `api_modules` and `api_function` kinds, and `apply` accepts
+  `continue_on_error`.
+- `tests/test_live.py`, `tests/test_refs.py`, `tests/test_snapshot.py`,
+  `tests/test_midi.py` and `tests/test_tools_extra.py`.
+
 - `pyflp.tools`, ported from [flpdiff](https://github.com/dawhubapp/flpdiff):
   a semantic diff of projects (`tools.diff`), JSON / text / canonical
   snapshots (`tools.info`), `git diff` integration (`tools.git`), offline

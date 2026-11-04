@@ -3,3 +3,4 @@ exclude .all-contributorsrc
 exclude .gitignore
 exclude .pre-commit-config.yaml
 exclude .readthedocs.yaml
+include pyflp/live/device/*.pyscript

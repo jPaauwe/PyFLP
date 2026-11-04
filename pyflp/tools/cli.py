@@ -17,11 +17,15 @@
 
     flpdiff [--verbose] [--color|--no-color] [--format text|json] [--plugin-state] A.flp B.flp
     flpdiff info FILE [--format text|json|canonical]
+    flpdiff snapshot FILE [--out state.json] [--format json]
+    flpdiff assert FILE --checks checks.json
     flpdiff reorganize IN.flp OUT.flp [--arrangement N] [--no-separators] [--dry-run]
     flpdiff git-setup [--global] [--textconv] [--lfs]
     flpdiff git-verify
     flpdiff git-driver ARGS...      (called by git)
     flpdiff bridge                  (one JSON request on stdin, one response on stdout)
+    flpdiff midi FILE.mid [--track N] [--ppq N] [--format text|json]
+    flpdiff api [MODULE] [--search TEXT]
 
 Exit codes of a comparison: 0 if identical, 1 if different and 2 on errors.
 """
@@ -36,7 +40,18 @@ from typing import Sequence
 
 __all__ = ["main"]
 
-SUBCOMMANDS = ("info", "reorganize", "git-setup", "git-verify", "git-driver", "bridge")
+SUBCOMMANDS = (
+    "info",
+    "snapshot",
+    "assert",
+    "reorganize",
+    "git-setup",
+    "git-verify",
+    "git-driver",
+    "bridge",
+    "midi",
+    "api",
+)
 
 
 def _version() -> str:
@@ -146,6 +161,154 @@ def _reorganize(argv: Sequence[str]) -> int:
     return 0
 
 
+def _snapshot(argv: Sequence[str]) -> int:
+    import pyflp
+    from pyflp.tools.snapshot import save_snapshot, snapshot_from_project
+
+    parser = argparse.ArgumentParser(
+        prog="flpdiff snapshot", description="Write a JSON state snapshot."
+    )
+    parser.add_argument("file")
+    parser.add_argument("--out", help="write the snapshot here (default: stdout)")
+    args = parser.parse_args(argv)
+    try:
+        state = snapshot_from_project(pyflp.parse(args.file))
+    except Exception as exc:  # noqa: BLE001
+        print(f"flpdiff snapshot: {exc}", file=sys.stderr)
+        return 2
+    if args.out:
+        save_snapshot(state, args.out)
+        print(args.out)
+    else:
+        print(json.dumps(state, indent=2, default=str))
+    return 0
+
+
+def _assert(argv: Sequence[str]) -> int:
+    import pyflp
+    from pyflp.tools.snapshot import check_assertions, load_snapshot, snapshot_from_project
+
+    parser = argparse.ArgumentParser(
+        prog="flpdiff assert",
+        description="Check a file of assertions against a project or snapshot.",
+    )
+    parser.add_argument("file")
+    parser.add_argument(
+        "--checks", required=True, help="JSON file with {'assertions': [...]}"
+    )
+    parser.add_argument("--show", action="store_true", help="print the snapshot value")
+    args = parser.parse_args(argv)
+    try:
+        with open(args.checks, encoding="utf-8") as fp:
+            payload = json.load(fp)
+    except (OSError, ValueError) as exc:
+        print(f"flpdiff assert: {exc}", file=sys.stderr)
+        return 2
+    assertions = payload.get("assertions") if isinstance(payload, dict) else payload
+    if not isinstance(assertions, list):
+        print("flpdiff assert: --checks must hold a list of assertions", file=sys.stderr)
+        return 2
+    try:
+        if args.file.casefold().endswith((".json", ".jsonl")):
+            state = load_snapshot(args.file)
+        else:
+            state = snapshot_from_project(pyflp.parse(args.file))
+    except Exception as exc:  # noqa: BLE001
+        print(f"flpdiff assert: {exc}", file=sys.stderr)
+        return 2
+    failures = check_assertions(state, assertions)
+    for failure in failures:
+        detail = failure.get("reason") or (
+            f"expected {failure.get('expected')!r}, got {failure.get('actual')!r}"
+        )
+        print(f"FAIL {failure.get('path')}: {detail}")
+    if args.show:
+        from pyflp.tools.snapshot import get_path
+
+        for assertion in assertions:
+            path = str(assertion.get("path"))
+            print(f"{path} = {get_path(state, path)!r}")
+    print(f"{len(assertions) - len(failures)}/{len(assertions)} assertions passed")
+    return 0 if not failures else 1
+
+
+def _midi(argv: Sequence[str]) -> int:
+    from pyflp.tools import midi
+
+    parser = argparse.ArgumentParser(
+        prog="flpdiff midi", description="Read a Standard MIDI File."
+    )
+    parser.add_argument("file")
+    parser.add_argument("--track", type=int, help="only this track (0-based)")
+    parser.add_argument("--ppq", type=int, help="also emit note specs for this PPQ")
+    parser.add_argument("--channel", type=int, help="channel iid for the note specs")
+    parser.add_argument("--format", choices=("text", "json"), default="text")
+    args = parser.parse_args(argv)
+    try:
+        notes = midi.read_notes(args.file, args.track)
+    except (OSError, ValueError) as exc:
+        print(f"flpdiff midi: {exc}", file=sys.stderr)
+        return 2
+    if args.format == "json":
+        payload = {"count": len(notes), "notes": [note.to_dict() for note in notes]}
+        if args.ppq:
+            payload["note_specs"] = midi.to_note_specs(notes, args.ppq, args.channel)
+        print(json.dumps(payload, indent=2))
+        return 0
+    print(f"{len(notes)} note(s) in {os.path.basename(args.file)}")
+    for note in notes:
+        print(
+            f"  {note.name:<4} velocity {note.velocity:>3} "
+            f"at {note.position:>8.3f} beats for {note.length:>6.3f}"
+        )
+    return 0
+
+
+def _api(argv: Sequence[str]) -> int:
+    from pyflp.live import api
+
+    parser = argparse.ArgumentParser(
+        prog="flpdiff api", description="Inspect FL Studio's Python scripting API."
+    )
+    parser.add_argument("module", nargs="?")
+    parser.add_argument("--search", help="substring search over function names")
+    parser.add_argument("--format", choices=("text", "json"), default="text")
+    args = parser.parse_args(argv)
+    try:
+        if args.search:
+            found = api.search(args.search, args.module)
+            if args.format == "json":
+                print(json.dumps(found, indent=2))
+            else:
+                for dotted, params in sorted(found.items()):
+                    print(f"{dotted}({params})")
+                print(f"{len(found)} match(es)")
+            return 0 if found else 1
+        if args.module:
+            signatures = api.signatures(args.module)
+            if args.format == "json":
+                print(json.dumps(signatures, indent=2))
+            else:
+                for dotted in sorted(signatures):
+                    print(signatures[dotted])
+            return 0
+    except KeyError as exc:
+        print(f"flpdiff api: {exc}", file=sys.stderr)
+        return 2
+    payload = {
+        "modules": list(api.modules()),
+        "counts": {name: len(entries) for name, entries in api.API.items()},
+        "total": len(api.functions()),
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"{payload['total']} function(s) in {len(payload['modules'])} module(s)")
+        for name in payload["modules"]:
+            print(f"  {name:<16} {payload['counts'][name]:>3}")
+    return 0
+
+
 def _git_setup(argv: Sequence[str]) -> int:
     from pyflp.tools.git import setup_git
 
@@ -176,6 +339,14 @@ def _main(argv: Sequence[str] | None = None) -> int:
 
     if command == "info":
         return _info(argv[1:])
+    if command == "snapshot":
+        return _snapshot(argv[1:])
+    if command == "assert":
+        return _assert(argv[1:])
+    if command == "midi":
+        return _midi(argv[1:])
+    if command == "api":
+        return _api(argv[1:])
     if command == "reorganize":
         return _reorganize(argv[1:])
     if command == "git-setup":

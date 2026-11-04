@@ -32,9 +32,17 @@ any of them fails::
      "operations": [{"op": "set_tempo", "args": {"bpm": 174}},
                     {"op": "rename_channel", "args": {"channel": 0, "name": "Kick"}}]}}
 
+Besides the project kinds there are snapshot, reference and MIDI kinds which
+don't edit a project at all - ``snapshot``, ``assert``, ``midi_notes``,
+``resolve``, ``api_modules`` and ``api_function`` - described in
+:data:`pyflp.tools.bridge.READ_KINDS`.
+
 ``kinds`` lists the supported kinds and their arguments.
 
-Inspired by flpdiff's bridge (MIT License, Copyright (c) 2026 Roman Pronskiy).
+Inspired by flpdiff's bridge (MIT License, Copyright (c) 2026 Roman Pronskiy);
+the snapshot, reference and MIDI kinds are ported from
+`flcli <https://github.com/s4k10503/flcli>`_ (MIT License, Copyright (c) 2026
+0y0).
 """
 
 from __future__ import annotations
@@ -47,9 +55,16 @@ from typing import Any, Callable, Dict
 
 import pyflp
 from pyflp.project import Project
-from pyflp.tools import edit
+from pyflp.tools import edit, midi, refs
 from pyflp.tools.diff import compare_projects, render_summary
 from pyflp.tools.info import render_canonical, render_info, to_info_json
+from pyflp.tools.snapshot import (
+    check_assertions,
+    diff_snapshots,
+    load_snapshot,
+    render_diff,
+    snapshot_from_project,
+)
 
 __all__ = ["handle", "bridge_main", "BridgeError"]
 
@@ -112,6 +127,26 @@ def _summaries(info: dict[str, Any], what: str) -> list[dict[str, Any]]:
             for ins in info["mixer"]["inserts"]
         ]
     raise AssertionError(what)
+
+
+_SNAPSHOT_SUFFIXES = (".json", ".jsonl")
+
+
+def _state_of(source: Any) -> Dict[str, Any]:
+    """Loads a state dictionary from a ``.json`` snapshot or an ``.flp`` project."""
+    if not source:
+        raise BridgeError("INVALID_ARGS", "a snapshot or project path is required")
+    text = str(source)
+    if text.casefold().endswith(_SNAPSHOT_SUFFIXES):
+        try:
+            return load_snapshot(text)
+        except FileNotFoundError as exc:
+            raise BridgeError("IO_ERROR", str(exc)) from exc
+        except ValueError as exc:
+            raise BridgeError("PARSE_ERROR", f"{text}: {exc}") from exc
+        except OSError as exc:
+            raise BridgeError("IO_ERROR", str(exc)) from exc
+    return snapshot_from_project(_load({"path": text}))
 
 
 def _read_kinds() -> dict[str, Callable[[Args], Any]]:
@@ -201,6 +236,95 @@ def _read_kinds() -> dict[str, Callable[[Args], Any]]:
         p = plan(_load(a), int(a.get("arrangement", 0)), bool(a.get("separators", True)))
         return {"plan": p.to_dict(), "text": p.render()}
 
+    # * State snapshots, references and MIDI (ported from flcli)
+
+    def snapshot(a: Args) -> Any:
+        return snapshot_from_project(_load(a))
+
+    def diff_state(a: Args) -> Any:
+        before = _state_of(a.get("before") or a.get("old"))
+        after = _state_of(a.get("after") or a.get("new"))
+        result = diff_snapshots(before, after)
+        if a.get("format") == "text":
+            return {"text": render_diff(result), "changes": len(result["changed"])}
+        return result
+
+    def assert_state(a: Args) -> Any:
+        state = _state_of(a.get("snapshot") or a.get("path"))
+        assertions = a.get("assertions") or a.get("checks") or []
+        failures = check_assertions(state, assertions)
+        return {"ok": not failures, "checked": len(assertions), "failures": failures}
+
+    def midi_notes(a: Args) -> Any:
+        source = a.get("midi") or a.get("path")
+        if not source:
+            raise BridgeError("INVALID_ARGS", "'midi' is required")
+        try:
+            notes = midi.read_notes(source, a.get("track"))
+        except FileNotFoundError as exc:
+            raise BridgeError("IO_ERROR", str(exc)) from exc
+        except (midi.MidiError, ValueError) as exc:
+            raise BridgeError("PARSE_ERROR", str(exc)) from exc
+        result: dict[str, Any] = {
+            "count": len(notes),
+            "notes": [note.to_dict() for note in notes],
+        }
+        if a.get("ppq"):
+            result["note_specs"] = midi.to_note_specs(
+                notes, int(a["ppq"]), a.get("channel")
+            )
+        return result
+
+    def resolve(a: Args) -> Any:
+        project = _load(a)
+        kind = str(a.get("kind", "channel"))
+        ref = a.get("ref")
+        if ref is None:
+            for mode in ("index", "name", "query"):
+                if mode in a and a[mode] is not None:
+                    ref = {"mode": mode, mode: a[mode]}
+                    break
+            if ref is None:
+                raise BridgeError(
+                    "INVALID_ARGS", "Pass 'ref', or one of index / name / query"
+                )
+        try:
+            if kind == "channel":
+                model = refs.resolve_channel(project, ref)
+            elif kind == "pattern":
+                model = refs.resolve_pattern(project, ref)
+            elif kind == "insert":
+                model = refs.resolve_insert(project, ref)
+            else:
+                raise BridgeError("INVALID_ARGS", f"Unknown kind {kind!r}")
+        except refs.RefError as exc:
+            raise BridgeError(exc.code, str(exc)) from exc
+        try:
+            name = model.name
+        except Exception:  # noqa: BLE001 - unnamed channels and patterns
+            name = None
+        return {"kind": kind, "name": name, "iid": getattr(model, "iid", None)}
+
+    def api_modules(a: Args) -> Any:
+        from pyflp.live import api
+
+        return {
+            "modules": list(api.modules()),
+            "counts": {name: len(entries) for name, entries in api.API.items()},
+            "total": len(api.functions()),
+        }
+
+    def api_function(a: Args) -> Any:
+        from pyflp.live import api
+
+        dotted = a.get("name") or a.get("function")
+        if not dotted:
+            raise BridgeError("INVALID_ARGS", "'name' is required")
+        try:
+            return api.describe(str(dotted))
+        except KeyError as exc:
+            raise BridgeError("NOT_FOUND", str(exc)) from exc
+
     return {f.__name__: f for f in locals().values() if callable(f)}
 
 
@@ -226,8 +350,21 @@ def _call_edit(project: Project, name: str, args: Args) -> Any:
     if func is None:
         raise BridgeError("UNSUPPORTED_KIND", f"Unknown edit {name!r}")
     params = inspect.signature(func).parameters
-    kwargs = {k: v for k, v in args.items() if k in params and k != "project"}
-    unknown = set(args) - set(params) - {"path", "output", "in_place"}
+    takes_extra = any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+    meta = {"path", "output", "in_place"}
+    kwargs: Args = {}
+    unknown = set()
+    for key, value in args.items():
+        if key in meta:
+            continue
+        if key in params:
+            kwargs[key] = value
+        elif not takes_extra:
+            unknown.add(key)
+        else:
+            kwargs[key] = value
     if unknown:
         raise BridgeError("INVALID_ARGS", f"{name} doesn't take {sorted(unknown)}")
     try:
@@ -270,7 +407,6 @@ def _kinds() -> dict[str, Any]:
         "batch": ["apply", "reorganize"],
     }
 
-
 def handle(request: dict[str, Any]) -> dict[str, Any]:
     """Handles a single request; never raises."""
     kind = request.get("kind", "") if isinstance(request, dict) else ""
@@ -285,12 +421,27 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
         elif kind == "apply":
             project = _load(args)
             results = []
+            errors = []
             for i, op in enumerate(args.get("operations", [])):
                 try:
                     results.append(_call_edit(project, op["op"], op.get("args", {})))
                 except BridgeError as exc:
-                    raise BridgeError(exc.code, f"operation {i} ({op.get('op')}): {exc}") from exc
-            result = {"results": results, "saved_to": _save(project, args)}
+                    if not args.get("continue_on_error", False):
+                        raise BridgeError(
+                            exc.code, f"operation {i} ({op.get('op')}): {exc}"
+                        ) from exc
+                    errors.append(
+                        {
+                            "operation": i,
+                            "op": op.get("op"),
+                            "error": exc.code,
+                            "message": str(exc),
+                        }
+                    )
+                    results.append(None)
+            result = {"results": results, "errors": errors}
+            if not errors:  # never save a half applied batch
+                result["saved_to"] = _save(project, args)
         elif kind == "reorganize":
             from pyflp.tools.reorganize import apply_reorganize, plan_reorganize
 
