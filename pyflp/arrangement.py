@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import enum
-from typing import Any, Iterator, Literal, Optional, cast
+from typing import Any, ClassVar, Iterator, Literal, Optional, cast
 
 import construct as c
 import construct_typed as ct
@@ -68,6 +68,22 @@ class PLSelectionEvent(StructEventBase):
 
 
 class PlaylistEvent(ListEventBase):
+    """Stores all the playlist items of an arrangement as an array of records.
+
+    The size of a record has grown over FL versions:
+
+    * **32** bytes up to FL Studio 20.
+    * **60** bytes in FL Studio 21 (28 unknown bytes added).
+    * **80** bytes in FL Studio 2024 / 2025 (20 more unknown bytes added).
+
+    The record size can't be reliably inferred from the event size alone (for
+    e.g. 480 bytes is 15 * 32 as well as 8 * 60 or 6 * 80). Since every record
+    stores ``pattern_base`` (always 20480) at offset 4, the size for which all
+    records contain it is picked.
+    """
+
+    PATTERN_BASE: ClassVar[int] = 20480
+
     STRUCT = c.GreedyRange(
         c.Struct(
             "position" / c.Int32ul,  # 4
@@ -81,13 +97,36 @@ class PlaylistEvent(ListEventBase):
             "_u2" / c.Bytes(4) * "Always (64, 100, 128, 128)",  # 24
             "start_offset" / c.Float32l,  # 28
             "end_offset" / c.Float32l,  # 32
-            "_u3" / c.If(c.this._params["new"], c.Bytes(28)) * "New in FL 21",  # 60
+            "_u3" / c.If(c.this._params["size"] >= 60, c.Bytes(28)) * "New in FL 21",  # 60
+            "_u4" / c.If(c.this._params["size"] >= 80, c.Bytes(20)) * "New in FL 2024",  # 80
         )
     )
-    SIZES = [32, 60]
+    SIZES = [60, 80, 32]
+    """Fallback order (when :attr:`PATTERN_BASE` isn't found) is kept backwards compatible."""
 
     def __init__(self, id: EventEnum, data: bytes) -> None:
-        super().__init__(id, data, new=not len(data) % 60)
+        super().__init__(id, data, size=self.detect_item_size(data))
+
+    def _detect_struct_size(self, data: bytes) -> int | None:
+        return self._kwds["size"] if not len(data) % self._kwds["size"] else None
+
+    @classmethod
+    def detect_item_size(cls, data: bytes) -> int:
+        """Returns the size of every playlist item record inside ``data``."""
+
+        def valid(size: int) -> bool:
+            positions = range(0, len(data) - size + 1, size)
+            return bool(positions) and all(
+                int.from_bytes(data[pos + 4 : pos + 6], "little") == cls.PATTERN_BASE
+                for pos in positions
+            )
+
+        dividing = [size for size in cls.SIZES if not len(data) % size]
+        others = [size for size in cls.SIZES if len(data) % size]
+        for size in (*sorted(dividing, reverse=True), *sorted(others, reverse=True)):
+            if valid(size):
+                return size
+        return dividing[0] if dividing else cls.SIZES[0]
 
 
 @enum.unique
@@ -390,12 +429,15 @@ class Arrangement(EventModel):
                 if max_idx - item["track_rvidx"] != track_idx:
                     continue
 
-                if item["item_index"] <= item["pattern_base"]:
-                    iid = item["item_index"]
-                    items.append(ChannelPLItem(item, i, pl_evt, channel=channels[iid]))
+                # An item whose channel / pattern can't be found (for e.g. an
+                # unsupported or corrupted project) is still yielded, as None.
+                if item["item_index"] < item["pattern_base"]:
+                    channel = channels.get(item["item_index"])
+                    items.append(ChannelPLItem(item, i, pl_evt, channel=channel))
                 else:
                     num = item["item_index"] - item["pattern_base"]
-                    items.append(PatternPLItem(item, i, pl_evt, pattern=patterns[num]))
+                    pattern = patterns.get(num)
+                    items.append(PatternPLItem(item, i, pl_evt, pattern=pattern))
             yield Track(ed, items=items)
 
 

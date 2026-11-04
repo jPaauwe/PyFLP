@@ -1199,8 +1199,11 @@ class Channel(EventModel):
     """![](https://bit.ly/3sbN8KU)"""
 
     @property
-    def group(self) -> DisplayGroup:  # TODO Setter
-        """Display group / filter under which this channel is grouped."""
+    def group(self) -> DisplayGroup | None:  # TODO Setter
+        """Display group / filter under which this channel is grouped.
+
+        ``None`` if the group couldn't be found.
+        """
         return self._kw["group"]
 
     icon = EventProp[int](PluginID.Icon)
@@ -1564,8 +1567,14 @@ class ChannelRack(EventModel, ModelCollection[Channel]):
 
         for et in self.events.divide(ChannelID.New, *ChannelID, *PluginID):
             iid = et.first(ChannelID.New).value
-            typ = et.first(ChannelID.Type).value
-            groupnum = et.first(ChannelID.GroupNum).value
+            typ = et.first(ChannelID.Type).value if ChannelID.Type in et else None
+
+            # The group number can point to a group which doesn't exist (#140)
+            group = None
+            if ChannelID.GroupNum in et:
+                groupnum = et.first(ChannelID.GroupNum).value
+                if 0 <= groupnum < len(groups):
+                    group = groups[groupnum]
 
             ct = Channel  # prevent type error and logic failure below
             if typ == ChannelType.Automation:
@@ -1583,7 +1592,7 @@ class ChannelRack(EventModel, ModelCollection[Channel]):
                     ct = Sampler
 
             if iid is not None:
-                cur_ch = ch_dict[iid] = ct(et, channels=ch_dict, group=groups[groupnum])
+                cur_ch = ch_dict[iid] = ct(et, channels=ch_dict, group=group)
                 yield cur_ch
 
     def __len__(self) -> int:

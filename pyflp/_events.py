@@ -43,6 +43,14 @@ WORD: Final = 64
 DWORD: Final = 128
 TEXT: Final = 192
 DATA: Final = 208
+SHORT_DWORD_IDS: Final = (DWORD + 44,)
+"""IDs in the DWORD range which FL Studio 2024+ serialises with 3 bytes of data.
+
+Reading them as 4 bytes shifts every subsequent event by a byte.
+"""
+SHORT_DWORD_MIN_VERSION: Final = (24,)
+"""Minimum FL Studio version (major) which uses :attr:`SHORT_DWORD_IDS`."""
+
 NEW_TEXT_IDS: Final = (
     TEXT + 49,  # ArrangementID.Name
     TEXT + 39,  # DisplayGroupID.Name
@@ -58,6 +66,22 @@ class _EventEnumMeta(enum.EnumMeta):
             obj: Can be an ``int`` or an ``EventEnum``.
         """
         return obj in tuple(self)
+
+    def __call__(cls, value: Any, *args: Any, **kwds: Any) -> Any:  # type: ignore
+        """Allows ``EventEnum(id)`` lookups on enums without any members.
+
+        :class:`EventEnum` itself has no members; IDs are defined by its
+        subclasses and :meth:`EventEnum._missing_` dispatches to them. Since
+        Python 3.12 (and 3.11.9+), :meth:`enum.EnumMeta.__call__` raises a
+        ``TypeError`` for a member-less enum before ``_missing_`` is reached.
+        """
+        member_names = getattr(cls, "_member_names_", None)  # fastenum may lack it
+        if not args and not kwds and member_names is not None and not member_names:
+            member = cls._missing_(value)
+            if member is None:
+                raise ValueError(f"{value!r} is not a valid {cls.__qualname__}")
+            return member
+        return super().__call__(value, *args, **kwds)
 
 
 class EventEnum(int, enum.Enum, metaclass=_EventEnumMeta):
@@ -117,7 +141,7 @@ class EventBase(Generic[T]):
             else:
                 expected_size = 4
 
-            if len(data) != expected_size:
+            if len(data) != expected_size and not (id in SHORT_DWORD_IDS and len(data) == 3):
                 raise InvalidEventChunkSize(expected_size, len(data))
 
         self.id = EventEnum(id)
@@ -150,15 +174,7 @@ class EventBase(Generic[T]):
     @property
     def size(self) -> int:
         """Serialised event size (in bytes)."""
-
-        if self.id >= TEXT:
-            return len(bytes(self))
-        elif self.id >= DWORD:
-            return 5
-        elif self.id >= WORD:
-            return 3
-        else:
-            return 2
+        return len(bytes(self))
 
 
 AnyEvent: TypeAlias = EventBase[Any]
@@ -359,23 +375,40 @@ class ListEventBase(EventBase[AnyListContainer], AnyList):
 
     def __init__(self, id: EventEnum, data: bytes, **kwds: Any) -> None:
         super().__init__(id, data, **kwds)
-        self._struct_size: int | None = None
+        self._struct_size = self._detect_struct_size(data)
+        self.data = self.value  # Akin to UserList.__init__
 
+        # Bytes which couldn't be parsed into items (an unknown item size or a
+        # partial item at the end). These are kept and re-emitted by
+        # __bytes__, so that a parse -> save round trip never loses data.
+        if self._struct_size is not None:
+            consumed = len(self.value) * self._struct_size
+        else:
+            consumed = len(self.STRUCT.build(self.value, **self._kwds))
+        self._trailing = bytes(data[consumed:])
+
+        if self._struct_size is None or self._trailing:
+            warnings.warn(
+                f"Cannot parse event {id} as event size {len(data)} "
+                f"is not a multiple of struct size(s) {self.SIZES or self._struct_size}. "
+                "Unparsed data will be preserved as-is.",
+                stacklevel=2,
+            )
+
+    def __bytes__(self) -> bytes:
+        id = c.Byte.build(self.id)
+        data = self.STRUCT.build(self.value, **self._kwds) + self._trailing
+        return id + c.VarInt.build(len(data)) + data
+
+    def _detect_struct_size(self, data: bytes) -> int | None:
+        """Returns the size of an individual item or ``None`` if it's unknown."""
         if not self.SIZES:
-            self._struct_size = self.STRUCT.subcon.sizeof()
+            return self.STRUCT.subcon.sizeof()
 
         for size in self.SIZES:
             if not len(data) % size:
-                self._struct_size = size
-                break
-
-        if self._struct_size is None:  # pragma: no cover
-            warnings.warn(
-                f"Cannot parse event {id} as event size {len(data)} "
-                f"is not a multiple of struct size(s) {self.SIZES}"
-            )
-        else:
-            self.data = self.value  # Akin to UserList.__init__
+                return size
+        return None
 
 
 class UnknownDataEvent(EventBase[bytes]):

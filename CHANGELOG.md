@@ -8,6 +8,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `pyflp.parse` accepts bytes-like objects and binary streams; `pyflp.save`
+  accepts binary streams; new `pyflp.dumps` returns the serialised bytes #155.
+- `FruityParametricEQ2` plugin parser #159.
+- `MixerParamScope` and `MixerParamsEvent.scope/insert_index/slot_index` #193.
+
+### Fixed
+
+- `TypeError: <enum 'EventEnum'> has no members` on Python 3.11.9+ / 3.12+
+  #183 #195 #201.
+- FL Studio 2024 / 2025 projects: 80-byte playlist records #177 #199 #200,
+  3-byte event ID 172, and a notes event before the first pattern which was
+  yielded as a broken pattern. Playlist record sizes are now detected reliably
+  even when the event size is a multiple of more than one record size.
+- List events (playlist, notes, etc.) which can't be parsed entirely don't raise
+  `AttributeError` anymore and their unparsed bytes are saved back unchanged.
+- `ValueError: Not a LogNormal` for `fx.start` / `fx.length` in FL 12 and older
+  projects #142 #187.
+- `IndexError` in `ChannelRack.__iter__` when a channel points to a nonexistent
+  display group #140; `Channel.group` is `None` then.
+- Plugin data which can't be parsed (incl. non-VST data stored as "Fruity
+  Wrapper") is kept as is instead of failing or warning about unknown markers #116.
+- Playlist items referring to nonexistent channels or patterns no longer raise
+  `KeyError`.
+- Global mixer parameters overwrote the first slot of the master insert #193.
+- `pyflp.save` failed for projects without channels and for most presets, and
+  overwrote the header of presets (`.fst` / `.fsc`) with a wrong channel count.
+- Plugin internal names are matched case-insensitively.
+- Outdated code in the "Implementing a plugin data parser" walkthrough #190.
+
 ## [2.2.1] - 2023-06-05
 
 ### Fixed

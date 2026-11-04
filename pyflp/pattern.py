@@ -350,9 +350,13 @@ class Patterns(EventModel, ModelCollection[Pattern]):
                 tmp_dict[cur_pat_id].append(ie)
 
         for events in tmp_dict.values():
-            et = EventTree(self.events, events)
-            self.events.children.append(et)
-            yield Pattern(et)
+            # FL 2024+ can write a NotesEvent before the first PatternID.New. It
+            # lands in a bucket without a PatternID.New and must not be yielded
+            # as a (broken) pattern; this also keeps __iter__ in sync with __len__.
+            if not any(ie.e.id == PatternID.New for ie in events):
+                continue
+
+            yield Pattern(EventTree(self.events, events))  # adds itself as child
 
     def __len__(self) -> int:
         """Returns the number of patterns found in the project.

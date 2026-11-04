@@ -325,6 +325,9 @@ import pyflp
 project = pyflp.parse("/path/to/parse.flp")
 ```
 
+> On Windows, use a raw string for paths, e.g. `pyflp.parse(r"C:\Users\me\song.flp")`,
+> otherwise Python fails with a `unicodeescape` `SyntaxError`.
+
 > If you get any sort of errors or warnings while doing this, please open an
 > [issue](https://github.com/demberto/PyFLP/issues).
 

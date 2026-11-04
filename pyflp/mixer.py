@@ -49,6 +49,7 @@ from pyflp.plugin import (
     FruityCenter,
     FruityFastDist,
     FruityNotebook2,
+    FruityParametricEQ2,
     FruitySend,
     FruitySoftClipper,
     FruityStereoEnhancer,
@@ -59,7 +60,15 @@ from pyflp.plugin import (
 )
 from pyflp.types import RGBA, FLVersion, T
 
-__all__ = ["Insert", "InsertDock", "InsertEQ", "InsertEQBand", "Mixer", "Slot"]
+__all__ = [
+    "Insert",
+    "InsertDock",
+    "InsertEQ",
+    "InsertEQBand",
+    "Mixer",
+    "MixerParamScope",
+    "Slot",
+]
 
 
 @enum.unique
@@ -122,7 +131,30 @@ class _InsertItems:
     own: dict[int, dict[str, Any]] = dataclasses.field(default_factory=dict)
 
 
+@enum.unique
+class MixerParamScope(enum.IntEnum):
+    """Scope of the target of an item in :class:`MixerParamsEvent`.
+
+    Stored in bits 13-15 of ``channel_data``. See #193.
+
+    .. versionadded:: 2.2.2
+    """
+
+    Channel = 0
+    Mixer = 1
+    Global = 2
+
+
 class MixerParamsEvent(ListEventBase):
+    """Stores parameters of all mixer inserts and their slots.
+
+    ``channel_data`` of every item is a bitfield of the form::
+
+        (scope << 13) | ((insert & 0x7F) << 6) | (slot & 0x3F)
+
+    where scope is a :class:`MixerParamScope`.
+    """
+
     STRUCT = c.GreedyRange(
         c.Struct(
             "_u4" / c.Bytes(4),  # 4
@@ -137,9 +169,17 @@ class MixerParamsEvent(ListEventBase):
         super().__init__(id, data)
         self.items_: DefaultDict[int, _InsertItems] = defaultdict(_InsertItems)
 
+        # Items with any other scope don't belong to an insert and would
+        # overwrite the values of insert 0 / slot 0 (#193). Very old versions
+        # may not store a scope at all, in which case all items are used.
+        has_scopes = any(self.scope(item) == MixerParamScope.Mixer for item in self.data)
+
         for item in self.data:
-            insert_idx = (item["channel_data"] >> 6) & 0x7F
-            slot_idx = item["channel_data"] & 0x3F
+            if has_scopes and self.scope(item) != MixerParamScope.Mixer:
+                continue
+
+            insert_idx = self.insert_index(item)
+            slot_idx = self.slot_index(item)
             insert = self.items_[insert_idx]
             id = item["id"]
 
@@ -147,6 +187,19 @@ class MixerParamsEvent(ListEventBase):
                 insert.slots[slot_idx][id] = item
             else:
                 insert.own[id] = item
+
+    @staticmethod
+    def scope(item: c.Container[Any]) -> int:
+        """Returns the :class:`MixerParamScope` value of ``item``."""
+        return item["channel_data"] >> 13
+
+    @staticmethod
+    def insert_index(item: c.Container[Any]) -> int:
+        return (item["channel_data"] >> 6) & 0x7F
+
+    @staticmethod
+    def slot_index(item: c.Container[Any]) -> int:
+        return item["channel_data"] & 0x3F
 
 
 @enum.unique
@@ -354,6 +407,7 @@ class Slot(EventModel):
         FruityCenter,
         FruityFastDist,
         FruityNotebook2,
+        FruityParametricEQ2,
         FruitySend,
         FruitySoftClipper,
         FruityStereoEnhancer,
