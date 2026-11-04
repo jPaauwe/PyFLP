@@ -43,6 +43,7 @@ __all__ = [
     "MidiError",
     "MidiNote",
     "MidiTrack",
+    "dumps_midi",
     "read_midi",
     "read_notes",
     "to_note_specs",
@@ -371,26 +372,30 @@ def _track_chunk(events: Sequence[Tuple[int, bytes]]) -> bytes:
     return _TRACK + struct.pack(">I", len(body)) + bytes(body)
 
 
-def write_midi(
+def dumps_midi(
     notes: Sequence[Mapping[str, Any]],
-    path: str,
     ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
     bpm: float = 120.0,
     track_name: str = "PyFLP",
     channel: int = 0,
-) -> str:
-    """Writes notes to a format 0 MIDI file and returns the path.
+) -> bytes:
+    """Builds the bytes of a format 0 MIDI file.
+
+    The counterpart of :func:`pyflp.dumps` for MIDI: use it when the file is
+    going somewhere other than a path (a stream, an HTTP response, a test).
 
     Each note is a mapping with ``key`` (or ``pitch``), ``position`` and
     ``length`` in ticks, plus an optional ``velocity`` in 0 - 128 which is
     scaled down to MIDI's 1 - 127.
 
     Raises:
-        MidiError: A note is malformed.
+        MidiError: A note is malformed or ``ticks_per_beat`` isn't positive.
     """
     if ticks_per_beat <= 0:
         raise MidiError("ticks_per_beat must be positive")
     microseconds = int(round(60_000_000 / float(bpm))) if bpm else 500_000
+    if isinstance(track_name, bytes):
+        track_name = track_name.decode("utf-8", errors="replace")
     events: List[Tuple[int, bytes]] = [
         (0, b"\xff\x03" + _vlq(len(track_name)) + track_name.encode("utf-8")),
         (0, b"\xff\x51\x03" + microseconds.to_bytes(3, "big")),
@@ -410,6 +415,25 @@ def write_midi(
         events.append((max(0, start) + max(1, length), bytes([0x80 | channel, pitch, 0])))
 
     header = _HEADER + struct.pack(">IHHH", 6, 0, 1, ticks_per_beat)
+    return header + _track_chunk(events)
+
+
+def write_midi(
+    notes: Sequence[Mapping[str, Any]],
+    path: str,
+    ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
+    bpm: float = 120.0,
+    track_name: str = "PyFLP",
+    channel: int = 0,
+) -> str:
+    """Writes notes to a format 0 MIDI file and returns the path.
+
+    See :func:`dumps_midi` for the note format.
+
+    Raises:
+        MidiError: A note is malformed.
+    """
+    data = dumps_midi(notes, ticks_per_beat, bpm, track_name, channel)
     with open(path, "wb") as fp:
-        fp.write(header + _track_chunk(events))
+        fp.write(data)
     return path

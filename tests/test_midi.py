@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import pathlib
 import struct
 
@@ -59,6 +60,23 @@ def test_write_midi_accepts_bytes(tmp_path: pathlib.Path) -> None:
     midi.write_midi([{"pitch": 62, "position": 0, "length": 10}], str(path))
     notes = midi.read_notes(path.read_bytes())
     assert notes[0].pitch == 62
+
+
+def test_dumps_midi_returns_the_same_bytes(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "riff.mid"
+    notes = [{"key": 60, "position": 0, "length": 96, "velocity": 100}]
+    midi.write_midi(notes, str(path), 96, 140, "My Track")
+    assert midi.dumps_midi(notes, 96, 140, "My Track") == path.read_bytes()
+    # A stream and a path produce the same file, which is the point of dumps.
+    buffer = io.BytesIO(midi.dumps_midi(notes, 96, 140, "My Track"))
+    assert [n.pitch for n in midi.read_notes(buffer)] == [60]
+
+
+def test_dumps_midi_accepts_a_bytes_track_name() -> None:
+    data = midi.dumps_midi(
+        [{"key": 60, "position": 0, "length": 1}], 96, 120, b"MCP Notes"
+    )
+    assert b"MCP Notes" in data
 
 
 def test_write_midi_rejects_bad_notes(tmp_path: pathlib.Path) -> None:

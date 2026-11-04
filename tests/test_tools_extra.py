@@ -356,6 +356,36 @@ def test_bridge_shift_notes(project: pyflp.Project, tmp_path: pathlib.Path) -> N
     assert any(note["position"] >= 96 for note in notes_of(pyflp.parse(out)))
 
 
+def test_bridge_set_sample_path(project: pyflp.Project, tmp_path: pathlib.Path) -> None:
+    """``path`` is the project and ``sample_path`` the new value; they must not collide."""
+    source = tmp_path / "in.flp"
+    out = tmp_path / "out.flp"
+    pyflp.save(project, source)
+    sample = tmp_path / "kick.wav"
+    sample.write_bytes(b"RIFF")
+    response = bridge.handle(
+        {
+            "kind": "apply",
+            "args": {
+                "path": str(source),
+                "output": str(out),
+                "operations": [
+                    {
+                        "op": "set_sample_path",
+                        "args": {"channel": 0, "sample_path": str(sample)},
+                    }
+                ],
+            },
+        }
+    )
+    assert response["ok"], response
+    from pyflp.channel import ChannelID
+
+    channel = list(pyflp.parse(out).channels)[0]
+    event = next(iter(channel.events.get(ChannelID.SamplePath)), None)
+    assert event is not None and event.value == str(sample)
+
+
 # * flpdiff CLI
 
 

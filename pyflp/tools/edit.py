@@ -258,15 +258,15 @@ def route_channel(project: Project, channel: int | str, insert: int) -> None:
         ch.events.insert_after(_last(ch.events, *ChannelID), new)
 
 
-def set_sample_path(project: Project, channel: int | str, path: str) -> None:
+def set_sample_path(project: Project, channel: int | str, sample_path: str) -> None:
     """Sets the sample of a sampler / audio clip channel."""
     ch = get_channel(project, channel)
     event = _first(ch.events, ChannelID.SamplePath)
     if event is not None:
-        event.value = path
+        event.value = sample_path
         return
     anchor = _last(ch.events, *ChannelID)
-    ch.events.insert_after(anchor, _text_event(project, ChannelID.SamplePath, path))
+    ch.events.insert_after(anchor, _text_event(project, ChannelID.SamplePath, sample_path))
 
 
 # * Mixer
