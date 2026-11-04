@@ -40,7 +40,13 @@ dev = [
   "pytest >=7.3.1",
   "tox >=4.5.1",
 ]
+# Real MIDI I/O for `pyflp.live`; everything else in it works without mido.
+live = ["mido >=1.3"]
 # for docs dependencies see docs/requirements.txt
+
+[project.scripts]
+flpdiff = "pyflp.tools.cli:main"
+pyflp-live = "pyflp.live.cli:main"
 
 [project.urls]
 Source = "https://github.com/demberto/PyFLP"
@@ -91,7 +97,10 @@ target-version = "py38"
 line-length = 100
 
 [tool.setuptools]
-packages = ["pyflp"]
+packages = ["pyflp", "pyflp.live", "pyflp.live.device", "pyflp.tools"]
+
+[tool.setuptools.package-data]
+"pyflp.live.device" = ["*.py", "*.pyscript"]
 
 [tool.setuptools_scm]
 write_to = "pyflp/_version.py"

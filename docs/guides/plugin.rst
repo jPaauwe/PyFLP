@@ -42,15 +42,20 @@ access the plugin data by,
    # Parse the FLP file into a project
    project = pyflp.parse("fruity-balance.flp")
 
-   # Collect all the events as a dict of ID to event
-   events = project.events_asdict()
-
    # Get the first plugin data event - the Fruity Balance one itself
-   plugin_data_event = events[PluginID.Data][0]
+   plugin_data_event = project.events.first(PluginID.Data)
 
-   # Get the raw data and convert it to a tuple of 8-bit unsigned integers
-   data = tuple(bytearray(plugin_data_event._struct))
-   print(data)
+   # Get the raw data (without the event ID and size) and print it as a tuple
+   # of 8-bit unsigned integers
+   data = plugin_data_event.STRUCT.build(plugin_data_event.value)
+   print(tuple(data))
+
+.. note::
+
+   Data of plugins which don't have a parser yet is stored as is, i.e. the
+   event's ``value`` itself is a ``bytes`` object. Since PyFLP already has a
+   parser for Fruity Balance, ``value`` is a dictionary here and ``build``
+   converts it back to bytes.
 
 4. Observe and analyze the output
 
@@ -58,12 +63,18 @@ access the plugin data by,
 
 .. code-block:: python
 
-   (0, 0, 0, 0, 256, 0, 0, 0)
+   (0, 0, 0, 0, 0, 1, 0, 0)
 
 That's a total of **8 bytes** worth of data for **2 knobs**.
 
 FL Studio *generally* uses 4 bytes for most type of data, so let's assume each
-knob takes **4 bytes**.
+knob takes **4 bytes**. Group the bytes into 32-bit little-endian integers:
+
+.. code-block:: python
+
+   import struct
+
+   print(struct.unpack("<2I", data))  # (0, 256)
 
 Now compare it with the **positions** of the knobs in Fruity Balance.
 
@@ -78,8 +89,7 @@ How? Let me explain.
 - **Balance** knob is at 12 o' clock
 - **Volume** knob is somewhere at 80% of its maximum.
 
-Now convert the 8-bit integer tuple into a two 32-bit integer tuple. We get the
-values ``0`` and ``256`` respectively. So, now we know, that **Balance** is 0
+The two 32-bit integers are ``0`` and ``256`` respectively. So, now we know, that **Balance** is 0
 (because its centred) and **Volume** is at 256. Also, since we didn't modify
 them at all, these are the **default** values.
 
@@ -130,10 +140,10 @@ in the same module:
 .. code-block:: python
 
    class FruityBalance(_PluginBase[FruityBalanceEvent]):
-       pan = _PluginDataProp[int]()
-       volume = _PluginDataProp[int]()
+       pan = _NativePluginProp[int]()
+       volume = _NativePluginProp[int]()
 
-You don't need to worry about ``_PluginBase`` and ``_PluginDataProp``. They are
+You don't need to worry about ``_PluginBase`` and ``_NativePluginProp``. They are
 implementation-level details, you don't *generally* need to worry about.
 
 Derive our newly create ``FruityBalance`` from ``_IPlugin`` and implement it:
@@ -147,28 +157,30 @@ Derive our newly create ``FruityBalance`` from ``_IPlugin`` and implement it:
 
    class FruityBalance(_PluginBase[FruityBalanceEvent], _IPlugin):
        INTERNAL_NAME = "Fruity Balance"
-       pan = _PluginDataProp[int]()
-       volume = _PluginDataProp[int]()
+       pan = _NativePluginProp[int]()
+       volume = _NativePluginProp[int]()
 
 .. note::
 
    Use :doc:`FLPEdit <./reversing>` to find out ``INTERNAL_NAME`` of a plugin.
 
 🎉 And that's basically it. The implementation is complete! Now all we need to
-do is glue ``FruityBalanceEvent`` and ``FruityBalance`` to the effect slot's
-:attr:`pyflp.mixer.Slot.plugin` attribute.
+do is glue ``FruityBalance`` to the effect slot's :attr:`pyflp.mixer.Slot.plugin`
+attribute.
 
 7. Glue the implementation to :class:`pyflp.mixer.Slot`:
 
-Import our newly created classes in :mod:`pyflp.mixer` and add an entry to
+Import our newly created class in :mod:`pyflp.mixer` and add it to
 :attr:`pyflp.mixer.Slot.plugin` like so:
 
 .. code-block:: python
    :emphasize-lines: 3
 
    plugin = PluginProp(
-        {
-            FruityBalanceEvent: FruityBalance,
-            ...
-        }
-    )
+       VSTPlugin,
+       FruityBalance,
+       ...
+   )
+
+For a generator (instrument) plugin, add it to
+:attr:`pyflp.channel.Instrument.plugin` instead.

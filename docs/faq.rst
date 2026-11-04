@@ -14,6 +14,19 @@ are some questions I think a newcomer or a contributor might ask?
 
 I will generally get back to you within a day ⏰.
 
+🪟 I get ``SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This is a Python error, not a PyFLP one. In a normal string, a backslash starts
+an escape sequence, so a Windows path like ``"C:\Users\..."`` is invalid (``\U``
+starts a unicode escape). Use a raw string, forward slashes or a
+:class:`pathlib.Path` instead:
+
+.. code-block:: python
+
+   project = pyflp.parse(r"C:\Users\me\Documents\Image-Line\FL Studio\Projects\Riser.flp")
+   project = pyflp.parse("C:/Users/me/Documents/Image-Line/FL Studio/Projects/Riser.flp")
+
 ✨ Is "X" supported / implemented?
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

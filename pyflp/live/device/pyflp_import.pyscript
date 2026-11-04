@@ -1,0 +1,88 @@
+"""PyFLP piano roll import script.
+
+Vendored from `flcli <https://github.com/s4k10503/flcli>`_
+(``flcli_import.pyscript``, MIT License, Copyright (c) 2026 0y0).
+
+Install by copying this file (keeping the ``.pyscript`` extension) to:
+
+    Documents/Image-Line/FL Studio/Settings/Piano roll scripts/pyflp_import.pyscript
+
+Then in FL Studio: open the Piano Roll on the destination channel and run
+``Tools -> Scripts -> pyflp_import``. The script reads ``pending_notes.json``
+written by :func:`pyflp.live.device.write_piano_roll_queue` *in the same
+directory* and inserts every note through the official ``flpianoroll`` API.
+
+The data file lives next to this script because FL Studio's embedded Python
+sandbox cannot ``open()`` absolute paths (``_io.FileIO`` returns NULL);
+relative filenames resolved against the script directory do work.
+"""
+import json
+import os
+
+import flpianoroll as flp
+
+QUEUE_FILENAME = "pending_notes.json"
+
+
+def _load_payload():
+    fh = open(QUEUE_FILENAME, "r")
+    try:
+        return json.loads(fh.read())
+    finally:
+        fh.close()
+
+
+def _make_note(spec, ppq):
+    note = flp.Note()
+    note.number = int(spec["pitch"]) & 0x7F
+    note.velocity = max(0.0, min(1.0, float(spec.get("velocity", 100)) / 127.0))
+    note.time = int(round(float(spec.get("position", 0.0)) * ppq))
+    note.length = max(1, int(round(float(spec.get("length", 1.0)) * ppq)))
+    return note
+
+
+def _run():
+    try:
+        payload = _load_payload()
+    except Exception as exc:
+        flp.Utils.ShowMessage(
+            "PyFLP: failed to read %s next to this script: %s"
+            % (QUEUE_FILENAME, exc)
+        )
+        return
+
+    notes = payload.get("notes") or []
+    if not notes:
+        flp.Utils.ShowMessage("PyFLP: the pending notes file is empty")
+        return
+
+    if payload.get("clear_existing"):
+        for index in range(flp.score.noteCount - 1, -1, -1):
+            flp.score.deleteNote(index)
+
+    ppq = flp.score.PPQ
+    for spec in notes:
+        flp.score.addNote(_make_note(spec, ppq))
+
+    # Write a sibling marker so a polling auto-trigger can detect consumption.
+    # FL Studio's embedded Python sandbox blocks os.remove / os.replace with
+    # SystemError, but ``open(..., "w")`` works.
+    try:
+        fh = open(QUEUE_FILENAME + ".done", "w")
+        try:
+            fh.write(str(len(notes)))
+        finally:
+            fh.close()
+    except Exception:
+        pass
+
+    if payload.get("consume", True):
+        try:
+            os.remove(QUEUE_FILENAME)
+        except Exception:
+            # The sandbox blocks os.remove with SystemError; the queue file is
+            # overwritten on the next call so leaving it stale is harmless.
+            pass
+
+
+_run()

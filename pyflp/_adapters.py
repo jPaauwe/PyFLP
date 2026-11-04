@@ -68,12 +68,23 @@ class Log2(SimpleAdapter[int, float]):
 # Thanks to @algmyr from Python Discord server for finding out the formulae used
 # ! See https://github.com/construct/construct/issues/999
 class LogNormal(SimpleAdapter[List[int], float]):
+    """A 0.0 - 1.0 float stored logarithmically as two 16-bit integers.
+
+    Older versions of FL Studio (for e.g. FL 12) store a plain integer instead
+    (#142). Such values are returned unchanged as an ``int``, so that parsing
+    doesn't fail and saving doesn't alter them. Hence, an ``int`` is always
+    encoded as-is and a ``float`` is always encoded logarithmically.
+    """
+
     def __init__(self, subcon: Any, bound: tuple[int, int]) -> None:
         super().__init__(subcon)  # type: ignore[call-arg]
         self.lo, self.hi = bound
 
     def _encode(self, obj: float, *_: Any) -> list[int]:
         """Clamps the integer representation of ``obj`` and returns it."""
+        if isinstance(obj, int) and not isinstance(obj, bool):
+            return [obj & 0xFFFF, (obj >> 16) & 0xFFFF]  # Legacy, non-LogNormal value
+
         if not 0.0 <= obj <= 1.0:
             raise ValueError(f"Expected a value between 0.0 to 1.0; got {obj}")
 
@@ -84,11 +95,11 @@ class LogNormal(SimpleAdapter[List[int], float]):
 
     def _decode(self, obj: list[int], *_: Any) -> float:
         """Returns a float representation of ``obj[0]`` between 0.0 to 1.0."""
-        if not obj[0]:
+        if not obj[0] and obj[1] in (0, 63):
             return 0.0
 
-        if obj[1] != 63:
-            raise ValueError(f"Not a LogNormal, 2nd int must be 63; not {obj[1]}")
+        if obj[1] != 63:  # Legacy, non-LogNormal value
+            return obj[0] | (obj[1] << 16)  # type: ignore[return-value]
 
         return max(min(1.0, 2 ** (obj[0] / 2**12) / 2**15), 0.0)
 

@@ -8,6 +8,105 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `pyflp.live`, a client for controlling a *running* FL Studio over two
+  virtual MIDI ports (needs the new `live` extra: `pip install pyflp[live]`).
+  Ported from [flcli](https://github.com/s4k10503/flcli):
+  - `protocol`: the `F0 7D 02 <rid> <packed JSON> F7` wire format, including
+    the 7 bits to 8 bits packing.
+  - `commands`: a typed builder per device command (transport, tempo,
+    patterns, channels, step sequencer, mixer, plugins, state).
+  - `client.Client`: a synchronous, typed API, plus `connect`, `ping`,
+    `snapshot`, `doctor` and `batch`.
+  - `transport`: `mido` backed MIDI ports, JSONL recording and hardware free
+    replay.
+  - `device`: the FL Studio controller script and the piano roll import /
+    export scripts, with an installer for FL Studio's settings folder.
+  - `api`: a catalogue of FL Studio's own scripting API, 422 functions across
+    14 modules, generated from the `flstudio-scripting` reference documents of
+    [delorenj/skills](https://github.com/delorenj/skills).
+  - The `pyflp-live` command line program (`ports`, `ping`, `doctor`,
+    `snapshot`, `batch`, `send`, `device-install`, `api`, ...). It emits one
+    JSON envelope per call and exits with a stable code per error.
+- `pyflp.tools.refs`: address a channel, pattern or mixer insert by index,
+  exact name or case insensitive substring, with an error (instead of a coin
+  flip) when a name is ambiguous.
+- `pyflp.tools.snapshot`: dotted path access, `diff_snapshots`, and an
+  assertion engine (`eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`) which
+  runs on live snapshots and on `snapshot_from_project` alike.
+- `pyflp.tools.midi`: read and write Standard MIDI Files without an extra
+  dependency, and convert notes to FL Studio note specs (`to_note_specs`).
+- `pyflp.tools.edit`: `shift_notes`, `stretch_notes` and `update_note`.
+- The `flpdiff` CLI gained `snapshot`, `assert`, `midi` and `api` subcommands;
+  the `bridge` gained `snapshot`, `diff_state`, `assert_state`, `midi_notes`,
+  `resolve`, `api_modules` and `api_function` kinds, and `apply` accepts
+  `continue_on_error`.
+- `tests/test_live.py`, `tests/test_refs.py`, `tests/test_snapshot.py`,
+  `tests/test_midi.py` and `tests/test_tools_extra.py`.
+
+- `pyflp.tools`, ported from [flpdiff](https://github.com/dawhubapp/flpdiff):
+  a semantic diff of projects (`tools.diff`), JSON / text / canonical
+  snapshots (`tools.info`), `git diff` integration (`tools.git`), offline
+  editing operations (`tools.edit`), a playlist reorganizer
+  (`tools.reorganize`), a JSON bridge for other programs (`tools.bridge`)
+  and the `flpdiff` command line interface (`python -m pyflp`).
+- `Insert.routed_to` - the inserts an insert sends to.
+- `EventTree.insert_after`, `EventTree.insert_before`, `EventTree.remove_event`.
+- `PLItemBase.muted` (bit `0x2000` of the item flags) can be read and set.
+- FL Studio 2025 test fixtures from flpdiff.
+
+- `pyflp.parse` accepts bytes-like objects and binary streams; `pyflp.save`
+  accepts binary streams; new `pyflp.dumps` returns the serialised bytes #155.
+- `FruityParametricEQ2` plugin parser #159.
+- `MixerParamScope`, `MixerParamsEvent.scope`, `.insert_index`, `.slot_index`,
+  `.channel_data` and `.base` #193.
+
+### Changed
+
+- `Insert.iid` is the insert number shown by FL Studio, i.e. master is 0
+  instead of -1 (and the last insert is "current"); `Mixer[i]` follows it.
+
+### Fixed
+
+- `pyflp.tools.edit.add_clip` on a project without clips wrote FL 21 sized
+  (60 byte) playlist records whatever the version, so FL Studio 20 showed
+  one garbled clip and dropped the rest (and FL 2024+ expected 80 bytes).
+  The size of a new or empty playlist event now follows the project's FL
+  version (`PlaylistEvent.size_for_version`). Verified by opening the
+  edited project in FL Studio 20.7.2.
+- Mixer parameters (insert volume, pan, stereo separation, EQ and slot
+  enabled / mix) of FL Studio 2024+ projects were read from wrong inserts.
+- VST plugin data of FL Studio 9, 21 and 2024+ (markers 6, 9, 11, 12) wasn't
+  parsed; their name, vendor, etc. were missing #116.
+- Iterating over the slots of an insert without stored parameters raised `KeyError`.
+- Setting `Note.key` to a note name always raised `ValueError`.
+- `PLItemBase.muted` always raised `KeyError`.
+- Track heights which aren't whole percentages changed on save.
+- `TypeError: <enum 'EventEnum'> has no members` on Python 3.11.9+ / 3.12+
+  #183 #195 #201.
+- FL Studio 2024 / 2025 projects: 80-byte playlist records #177 #199 #200,
+  3-byte event ID 172, and a notes event before the first pattern which was
+  yielded as a broken pattern. Playlist record sizes are now detected reliably
+  even when the event size is a multiple of more than one record size.
+- List events (playlist, notes, etc.) which can't be parsed entirely don't raise
+  `AttributeError` anymore and their unparsed bytes are saved back unchanged.
+- `ValueError: Not a LogNormal` for `fx.start` / `fx.length` in FL 12 and older
+  projects #142 #187.
+- `IndexError` in `ChannelRack.__iter__` when a channel points to a nonexistent
+  display group #140; `Channel.group` is `None` then.
+- Plugin data which can't be parsed (incl. non-VST data stored as "Fruity
+  Wrapper") is kept as is instead of failing or warning about unknown markers #116.
+- Playlist items referring to nonexistent channels or patterns no longer raise
+  `KeyError`.
+- Global mixer parameters overwrote the first slot of the master insert #193.
+- `pyflp.save` failed for projects without channels and for most presets, and
+  overwrote the header of presets (`.fst` / `.fsc`) with a wrong channel count.
+- Plugin internal names are matched case-insensitively.
+- Outdated code in the "Implementing a plugin data parser" walkthrough #190.
+
 ## [2.2.1] - 2023-06-05
 
 ### Fixed

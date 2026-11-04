@@ -17,7 +17,18 @@ from __future__ import annotations
 
 import enum
 import warnings
-from typing import Any, ClassVar, Dict, Generic, Literal, Protocol, TypeVar, cast, runtime_checkable
+from typing import (
+    Any,
+    ClassVar,
+    Dict,
+    Generic,
+    Literal,
+    Protocol,
+    Tuple,
+    TypeVar,
+    cast,
+    runtime_checkable,
+)
 
 import construct as c
 import construct_typed as ct
@@ -46,6 +57,7 @@ __all__ = [
     "FruityBloodOverdrive",
     "FruityFastDist",
     "FruityNotebook2",
+    "FruityParametricEQ2",
     "FruitySend",
     "FruitySoftClipper",
     "FruityStereoEnhancer",
@@ -143,6 +155,67 @@ class FruityNotebook2Event(StructEventBase):
             ),
         ),
         "editable" / c.Flag,
+    )
+
+
+@enum.unique
+class EQ2Flags(enum.IntFlag):
+    """Options of :class:`FruityParametricEQ2` stored as a bitfield."""
+
+    LinearPhase = 1 << 0
+    EnhancedHighQuality = 1 << 1
+    PhaseRotation = 1 << 2
+    BandSoloOnShift = 1 << 3
+    BandSoloInheritBandwidth = 1 << 4
+    Heatmap = 1 << 5
+    Histogram = 1 << 6
+    AverageMode = 1 << 7
+
+
+def _eq2_bands(subcon: Any) -> Any:
+    return c.ExprAdapter(
+        subcon[7],
+        lambda obj, *_: tuple(obj),  # type: ignore
+        lambda obj, *_: list(obj),  # type: ignore
+    )
+
+
+def _eq2_band_state(prefix: str = "") -> list[Any]:
+    return [
+        f"{prefix}levels" / _eq2_bands(c.Int32sl),
+        f"{prefix}frequencies" / _eq2_bands(c.Int32ul),
+        f"{prefix}bandwidths" / _eq2_bands(c.Int32ul),
+        f"{prefix}types" / _eq2_bands(c.Int32ul),
+        f"{prefix}orders" / _eq2_bands(c.Int32sl),
+        f"{prefix}main_level" / c.Int32sl,
+    ]
+
+
+class FruityParametricEQ2Event(StructEventBase):
+    # Layout as described in #159. Fields after the band states are optional
+    # since they weren't verified across FL Studio versions.
+    STRUCT = c.Struct(
+        "version" / c.Int32ul,  # 4
+        *_eq2_band_state(),  # 148
+        *_eq2_band_state("spare_"),  # 292
+        "high_quality" / c.Optional(FourByteBool),  # 296
+        "heatmap_high_precision" / c.Optional(FourByteBool),  # 300
+        "view_band_tokens" / c.Optional(c.Flag),  # 301
+        "monitor_mode" / c.Optional(c.Int32sl),  # 305
+        "_heatmap_not_enhanced" / c.Optional(FourByteBool),  # 309
+        "linear_phase_level" / c.Optional(c.Int32sl),  # 313
+        "linear_phase_mod_speed" / c.Optional(c.Int32sl),  # 317
+        "flags" / c.Optional(StdEnum[EQ2Flags](c.Int8ul)),  # 318
+        "muted_bands" / c.Optional(c.Int32ul),  # 322
+        "monitor_input" / c.Optional(c.Int32sl),  # 326
+        "band_solo_mode" / c.Optional(c.Int32sl),  # 330
+        "pivot_slope" / c.Optional(c.Int32sl),  # 334
+        "frequency_precision" / c.Optional(c.Int32sl),  # 338
+        "time_smoothing" / c.Optional(c.Int32sl),  # 342
+        "histogram_range" / c.Optional(c.Int32sl),  # 346
+        "heatmap_position" / c.Optional(c.Int32sl),  # 350
+        "min_phase_mod_speed" / c.Optional(c.Int32sl),  # 354
+        "_extra" / c.GreedyBytes,
     )
 
 
@@ -312,8 +385,14 @@ class VSTPluginEvent(StructEventBase):
         ),
     ).compile()
 
+    KNOWN_MARKERS: ClassVar[tuple[int, ...]] = (6, 8, 9, 10, 11, 12)
+    """Values of the first byte of :attr:`type` seen across FL Studio 9 to 2025.
+
+    They all share the same layout of sub-events (#116).
+    """
+
     def __init__(self, id: Any, data: bytearray) -> None:
-        if data[0] not in (8, 10):
+        if data[0] not in self.KNOWN_MARKERS:
             warnings.warn(
                 f"VSTPluginEvent: Unknown marker {data[0]} detected. "
                 "Open an issue at https://github.com/demberto/PyFLP/issues "
@@ -970,6 +1049,54 @@ class FruityNotebook2(_PluginBase[FruityNotebook2Event], _IPlugin, ModelReprMixi
     """A dict of page numbers to their contents."""
 
 
+class FruityParametricEQ2(
+    _PluginBase[FruityParametricEQ2Event], _IPlugin, ModelReprMixin
+):
+    """Fruity Parametric EQ 2, a 7-band parametric equalizer.
+
+    Per-band properties are 7-tuples ordered from band 1 to band 7.
+
+    .. versionadded:: 2.2.2
+    """
+
+    INTERNAL_NAME = "Fruity parametric EQ 2"
+
+    bandwidths = _NativePluginProp[Tuple[int, ...]]()
+    frequencies = _NativePluginProp[Tuple[int, ...]]()
+    levels = _NativePluginProp[Tuple[int, ...]]()
+    """Gain of each band."""
+
+    main_level = _NativePluginProp[int]()
+    """Output gain."""
+
+    orders = _NativePluginProp[Tuple[int, ...]]()
+    """Order / steepness of each band, -3 to 3."""
+
+    types = _NativePluginProp[Tuple[int, ...]]()
+    """Shape of each band (low pass, band pass, peaking, etc.), 0 to 7."""
+
+    flags = _NativePluginProp[EQ2Flags]()
+    """Linear phase, heatmap, histogram and band solo options."""
+
+    high_quality = _NativePluginProp[bool]()
+    """:guilabel:`High quality` (oversampling)."""
+
+    heatmap_high_precision = _NativePluginProp[bool]()
+    linear_phase_level = _NativePluginProp[int]()
+    """Lowest (0) to Highest (5)."""
+
+    linear_phase_mod_speed = _NativePluginProp[int]()
+    """Normal (0) to Ultra (3)."""
+
+    monitor_mode = _NativePluginProp[int]()
+    """Off (0), Input (1) or Output (2)."""
+
+    muted_bands = _NativePluginProp[int]()
+    """Bitfield; bits 0-6 are set for muted bands 1-7."""
+
+    view_band_tokens = _NativePluginProp[bool]()
+
+
 class FruitySend(_PluginBase[FruitySendEvent], _IPlugin, ModelReprMixin):
     """![](https://bit.ly/3DqjvMu)"""
 
@@ -1134,6 +1261,7 @@ class Soundgoodizer(_PluginBase[SoundgoodizerEvent], _IPlugin, ModelReprMixin):
 
 def get_event_by_internal_name(name: str) -> type[AnyEvent]:
     for cls in _PluginBase.__subclasses__():
-        if getattr(cls, "INTERNAL_NAME", None) == name:
+        internal_name = getattr(cls, "INTERNAL_NAME", None)
+        if internal_name is not None and internal_name.casefold() == name.casefold():
             return cls.__orig_bases__[0].__args__[0]  # type: ignore
     return NativePluginEvent

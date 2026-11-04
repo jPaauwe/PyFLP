@@ -155,10 +155,17 @@ class Note(ItemModel[NotesEvent]):
                 raise ValueError("Expected a value between 0-131.")
             self["key"] = value
         else:
-            for i, name in enumerate(self._NOTE_NAMES):
+            # Longest names first, so that "C#5" isn't matched as "C"
+            for i, name in sorted(enumerate(self._NOTE_NAMES), key=lambda n: -len(n[1])):
                 if value.startswith(name):
-                    octave = int(value.replace(name, "", 1))
-                    self["key"] = octave * 12 + i
+                    try:
+                        key = int(value[len(name) :]) * 12 + i
+                    except ValueError:
+                        break
+                    if key not in range(132):
+                        raise ValueError("Expected a note between C0-B10.")
+                    self["key"] = key
+                    return
             raise ValueError(f"Invalid key name: {value}")
 
     length = StructProp[int]()
@@ -350,9 +357,13 @@ class Patterns(EventModel, ModelCollection[Pattern]):
                 tmp_dict[cur_pat_id].append(ie)
 
         for events in tmp_dict.values():
-            et = EventTree(self.events, events)
-            self.events.children.append(et)
-            yield Pattern(et)
+            # FL 2024+ can write a NotesEvent before the first PatternID.New. It
+            # lands in a bucket without a PatternID.New and must not be yielded
+            # as a (broken) pattern; this also keeps __iter__ in sync with __len__.
+            if not any(ie.e.id == PatternID.New for ie in events):
+                continue
+
+            yield Pattern(EventTree(self.events, events))  # adds itself as child
 
     def __len__(self) -> int:
         """Returns the number of patterns found in the project.
