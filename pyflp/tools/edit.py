@@ -101,6 +101,10 @@ __all__ = [
     "get_arrangement",
     "list_clips",
     "add_clip",
+    "list_markers",
+    "add_marker",
+    "remove_markers",
+    "create_arrangement",
     "remove_clips",
     "move_clips",
     "rename_track",
@@ -935,6 +939,9 @@ def add_clip(
 ) -> dict[str, Any]:
     """Places a pattern clip or an audio / automation clip (``channel``) on the playlist.
 
+    ``channel`` should be a Sampler / audio clip channel (an audio clip) or an
+    automation clip channel; FL Studio does not place synth channels.
+
     Args:
         track: 1-based playlist track number.
         length: Defaults to the pattern's length or one bar.
@@ -969,9 +976,165 @@ def add_clip(
     )
     if pattern is not None:
         item.update({"start_offset": _NAN, "end_offset": _NAN})
+    else:
+        # FL writes -1.0 (not NaN) as the start / end offset of audio and
+        # automation clips (seen in FL 20.8 saves); a clip copied from a
+        # pattern record would otherwise carry NaN.
+        item.update({"start_offset": -1.0, "end_offset": -1.0})
     item["item_flags"] = (item["item_flags"] | 0x2000) if muted else (item["item_flags"] & ~0x2000)
     event.value.append(item)
     return _clip_dict(project, item, len(event) - 1)
+
+
+# * Time markers and arrangements
+#
+# FL Studio 20 writes an arrangement as New, Name, an unnamed 1 byte event
+# (ID 36), Playlist, its time markers, then one Data (+ optional Name) event
+# per playlist track. A time marker is Position, Numerator, Denominator, Name;
+# Position is the tick, with 0x08000000 set for a time signature marker (the
+# other high bits mark marker actions FL can't set from here).
+
+_MARKER_SIGNATURE = 0x08000000
+_MARKER_FLAGS = 0xFF000000
+
+
+def _marker_groups(arr: Arrangement) -> list[list[AnyEvent]]:
+    groups: list[list[AnyEvent]] = []
+    for event in arr.events:
+        if event.id == TimeMarkerID.Position:
+            groups.append([event])
+        elif event.id in TimeMarkerID and groups and len(groups[-1]) < 4:
+            groups[-1].append(event)
+    return groups
+
+
+def _marker_dict(index: int, group: list[AnyEvent]) -> dict[str, Any]:
+    values = {e.id: e.value for e in group}
+    raw = int(values.get(TimeMarkerID.Position, 0))
+    kind = "signature" if raw & _MARKER_SIGNATURE else ("action" if raw & _MARKER_FLAGS else "marker")
+    return {
+        "index": index,
+        "position": raw & ~_MARKER_FLAGS,
+        "name": values.get(TimeMarkerID.Name) or "",
+        "kind": kind,
+        "numerator": values.get(TimeMarkerID.Numerator),
+        "denominator": values.get(TimeMarkerID.Denominator),
+    }
+
+
+def list_markers(project: Project, arrangement: int | str = 0) -> list[dict[str, Any]]:
+    """Lists an arrangement's time markers (position in ticks, without flags)."""
+    arr = get_arrangement(project, arrangement)
+    return [_marker_dict(i, g) for i, g in enumerate(_marker_groups(arr))]
+
+
+def add_marker(
+    project: Project,
+    position: int,
+    name: str = "",
+    arrangement: int | str = 0,
+    signature: str | None = None,
+) -> dict[str, Any]:
+    """Adds a time marker at ``position`` ticks (``project.ppq * 4`` = 1 bar of 4/4).
+
+    ``signature="3/4"`` makes it a time signature marker instead of a text one.
+    """
+    from pyflp._events import U8Event, U32Event
+
+    _check(position, 0, 0x00FFFFFF, "Position")
+    num, den, raw = 4, 4, position
+    if signature is not None:
+        try:
+            num, den = (int(x) for x in str(signature).split("/"))
+        except ValueError as exc:
+            raise EditError("INVALID_ARGS", f"signature must look like '3/4', got {signature!r}") from exc
+        _check(num, 1, 16, "Numerator")
+        if den not in (2, 4, 8, 16):
+            raise EditError("INVALID_ARGS", f"Denominator must be 2, 4, 8 or 16, got {den}")
+        raw |= _MARKER_SIGNATURE
+    arr = get_arrangement(project, arrangement)
+    groups = _marker_groups(arr)
+    anchor = (
+        groups[-1][-1]
+        if groups
+        else _first(arr.events, ArrangementID.Playlist)
+        or _first(arr.events, ArrangementID.Name)
+        or arr.events.first(ArrangementID.New)
+    )
+    new = [
+        U32Event(TimeMarkerID.Position, struct.pack("<I", raw)),
+        U8Event(TimeMarkerID.Numerator, bytes([num])),
+        U8Event(TimeMarkerID.Denominator, bytes([den])),
+        _text_event(project, TimeMarkerID.Name, name),
+    ]
+    for event in new:
+        arr.events.insert_after(anchor, event)
+        anchor = event
+    return _marker_dict(len(groups), new)
+
+
+def remove_markers(
+    project: Project,
+    arrangement: int | str = 0,
+    name: str | None = None,
+    position: int | None = None,
+) -> int:
+    """Removes time markers matching ``name`` and / or ``position``; returns how many."""
+    if name is None and position is None:
+        raise EditError("INVALID_ARGS", "Pass name and / or position")
+    arr = get_arrangement(project, arrangement)
+    removed = 0
+    for i, group in enumerate(_marker_groups(arr)):
+        info = _marker_dict(i, group)
+        if (name is None or info["name"] == name) and (position is None or info["position"] == position):
+            for event in group:
+                arr.events.remove_event(event)
+            removed += 1
+    return removed
+
+
+def create_arrangement(project: Project, name: str) -> dict[str, Any]:
+    """Adds a new, empty arrangement after the last one; returns its index.
+
+    Its playlist tracks copy arrangement 0's track layout (height, colour,
+    flags) without names or clips. Use the returned index (or ``name``) as
+    the ``arrangement`` argument of the clip, track and marker edits.
+    """
+    from pyflp._events import U16Event
+
+    arrs = list(project.arrangements)
+    if not arrs:
+        raise EditError("NOT_FOUND", "The project has no arrangement to copy the track layout from")
+    if any(a.name == name for a in arrs):
+        raise EditError("INVALID_ARGS", f"An arrangement named {name!r} already exists")
+    src, last = arrs[0], arrs[-1]
+    new_iid = max(a.iid for a in arrs) + 1
+
+    root = list(project.events)
+    src_new = src.events.first(ArrangementID.New)
+    start = next(i for i, e in enumerate(root) if e is src_new)
+    unnamed = next((e for e in root[start : start + 6] if int(e.id) == 36), None)
+
+    events: list[AnyEvent] = [
+        U16Event(ArrangementID.New, struct.pack("<H", new_iid)),
+        _text_event(project, ArrangementID.Name, name),
+    ]
+    if unnamed is not None:
+        events.append(copy.deepcopy(unnamed))
+    events.append(
+        PlaylistEvent(ArrangementID.Playlist, b"", size=PlaylistEvent.size_for_version(project.version.major))
+    )
+    tracks_copied = 0
+    for event in src.events:
+        if event.id == TrackID.Data:
+            events.append(copy.deepcopy(event))
+            tracks_copied += 1
+
+    anchor = list(last.events)[-1]
+    for event in events:
+        project.events.insert_after(anchor, event)
+        anchor = event
+    return {"index": len(arrs), "iid": new_iid, "name": name, "tracks": tracks_copied}
 
 
 def _clip_matcher(

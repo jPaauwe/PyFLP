@@ -207,6 +207,9 @@ def _read_kinds() -> dict[str, Callable[[Args], Any]]:
     def list_clips(a: Args) -> Any:
         return edit.list_clips(_load(a), a.get("arrangement", 0), a.get("track"))
 
+    def list_markers(a: Args) -> Any:
+        return edit.list_markers(_load(a), a.get("arrangement", 0))
+
     def get_notes(a: Args) -> Any:
         return edit.get_notes(_load(a), a["pattern"])
 
@@ -331,7 +334,7 @@ def _read_kinds() -> dict[str, Callable[[Args], Any]]:
 READ_KINDS = _read_kinds()
 
 _NOT_EDITS = {"EditError", "NoteSpec", "get_channel", "get_insert", "get_pattern", "get_notes",
-              "get_arrangement", "list_clips", "tracks", "iter_plugins"}  # fmt: skip
+              "get_arrangement", "list_clips", "list_markers", "tracks", "iter_plugins"}  # fmt: skip
 EDIT_KINDS: dict[str, Callable[..., Any]] = {
     name: getattr(edit, name) for name in edit.__all__ if name not in _NOT_EDITS
 }

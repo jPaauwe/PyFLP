@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `pyflp.tools.edit`: `add_marker` (text or time signature marker),
+  `remove_markers`, `list_markers` and `create_arrangement` (a new, empty
+  arrangement that copies arrangement 0's track layout). Bridge kinds of
+  the same names. The event layout follows FL Studio 20 saves.
 - `pyflp.live`, a client for controlling a *running* FL Studio over two
   virtual MIDI ports (needs the new `live` extra: `pip install pyflp[live]`).
   Ported from [flcli](https://github.com/s4k10503/flcli):
@@ -71,6 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Audio and automation clips placed with `add_clip(channel=...)` carried the
+  NaN start / end offsets of pattern clips; FL writes -1.0 for them.
 - `flpdiff diff OLD NEW` (the explicit spelling of `flpdiff OLD NEW`) took
   `diff` for the first file name and exited with a usage error.
 - `pyflp.tools.edit.add_clip` on a project without clips wrote FL 21 sized

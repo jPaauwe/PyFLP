@@ -367,3 +367,60 @@ def test_playlist_size_for_version():
     from pyflp.arrangement import PlaylistEvent
 
     assert [PlaylistEvent.size_for_version(v) for v in (12, 20, 21, 23, 24, 25)] == [32, 32, 60, 60, 80, 80]
+
+
+def test_add_channel_clip_uses_fl_audio_offsets(tmp_path: pathlib.Path):
+    """Audio / automation clips carry -1.0 offsets in FL 20 saves, not NaN.
+
+    A channel clip copied from a pattern clip record kept NaN, which is how
+    FL marks pattern clips.
+    """
+    import math
+
+    project = pyflp.parse(FL20)
+    edit.remove_clips(project, start=0)
+    edit.add_clip(project, 1, 0, pattern=next(iter(project.patterns)).iid)
+    edit.add_clip(project, 2, 0, channel=11, length=27)
+    out = tmp_path / "audio.flp"
+    pyflp.save(project, out)
+    from pyflp.arrangement import ArrangementID
+
+    reparsed = pyflp.parse(out)
+    event = next(e for a in reparsed.arrangements for e in a.events if e.id == ArrangementID.Playlist)
+    pattern_clip, audio_clip = list(event)
+    assert math.isnan(pattern_clip["start_offset"])
+    assert (audio_clip["start_offset"], audio_clip["end_offset"]) == (-1.0, -1.0)
+    assert audio_clip["item_index"] == 11
+
+
+def test_markers_and_arrangements_round_trip(tmp_path: pathlib.Path):
+    project = pyflp.parse(FL20)
+    before = len(edit.list_markers(project, 1))
+    edit.add_marker(project, 0, "Intro")
+    edit.add_marker(project, 1536, "Verse", arrangement=1)
+    edit.add_marker(project, 3072, "3/4", arrangement=1, signature="3/4")
+    created = edit.create_arrangement(project, "Alt")
+    edit.add_clip(project, 2, 384, pattern=next(iter(project.patterns)).iid, arrangement="Alt")
+    edit.add_marker(project, 384, "Alt start", arrangement="Alt")
+    with pytest.raises(edit.EditError):
+        edit.create_arrangement(project, "Alt")  # names are unique
+    with pytest.raises(edit.EditError):
+        edit.add_marker(project, 0, signature="3/5")
+
+    out = tmp_path / "markers.flp"
+    pyflp.save(project, out)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        reparsed = pyflp.parse(out)
+    names = [a.name for a in reparsed.arrangements]
+    assert names[-1] == "Alt" and created["index"] == len(names) - 1
+    assert len(list(list(reparsed.arrangements)[-1].tracks)) == 500
+    assert [m["name"] for m in edit.list_markers(reparsed, 0)] == ["Intro"]
+    arr1 = edit.list_markers(reparsed, 1)
+    assert len(arr1) == before + 2
+    assert arr1[-1] == {"index": before + 1, "position": 3072, "name": "3/4", "kind": "signature",
+                        "numerator": 3, "denominator": 4}
+    assert edit.list_markers(reparsed, "Alt")[0]["name"] == "Alt start"
+    assert [c["position"] for c in edit.list_clips(reparsed, "Alt")] == [384]
+    assert edit.remove_markers(reparsed, 1, name="Verse") == 1
+    assert len(edit.list_markers(reparsed, 1)) == before + 1
