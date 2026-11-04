@@ -927,6 +927,13 @@ def _new_clip(event: PlaylistEvent, template: Any | None) -> c.Container[Any]:
     return item
 
 
+_CLIP_CHANNEL_TYPES = (4, 5)
+"""FL's channel types for playlist clips: 4 = audio clip, 5 = automation clip.
+
+(:class:`pyflp.channel.ChannelType` calls 4 ``Instrument``; FL Studio 20 saves
+its audio clip channels with it.)"""
+
+
 def add_clip(
     project: Project,
     track: int,
@@ -939,8 +946,9 @@ def add_clip(
 ) -> dict[str, Any]:
     """Places a pattern clip or an audio / automation clip (``channel``) on the playlist.
 
-    ``channel`` should be a Sampler / audio clip channel (an audio clip) or an
-    automation clip channel; FL Studio does not place synth channels.
+    ``channel`` must be an audio clip or an automation clip channel (FL types
+    4 and 5); a Sampler or plugin channel raises ``INVALID_ARGS``, because FL
+    Studio 20 crashes opening such a clip.
 
     Args:
         track: 1-based playlist track number.
@@ -957,7 +965,18 @@ def add_clip(
         item_index = PATTERN_BASE + p.iid
         default_length = p.length or 0
     else:
-        item_index = get_channel(project, channel).iid  # type: ignore[arg-type]
+        ch = get_channel(project, channel)  # type: ignore[arg-type]
+        kind = next((int(e.value) for e in ch.events.get(ChannelID.Type)), None)
+        if kind not in _CLIP_CHANNEL_TYPES:
+            # FL Studio 20.7 crashes (null read in _FLEngine_x64.dll) opening a
+            # playlist clip that points at a Sampler or a plugin channel.
+            raise EditError(
+                "INVALID_ARGS",
+                f"Channel {ch.iid} ({ch.name!r}) is not an audio clip or automation clip "
+                f"channel (type {kind}); FL Studio can't place it on the playlist. "
+                "Use a pattern clip for a Sampler or an instrument.",
+            )
+        item_index = ch.iid
         default_length = 0
     length = length or default_length or project.ppq * 4
 

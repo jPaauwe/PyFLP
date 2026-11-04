@@ -75,6 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `add_clip(channel=...)` refuses channels that are not audio clip (FL type 4)
+  or automation clip (type 5) channels. A Sampler placed as a playlist clip
+  made FL Studio 20.7.2 crash on open (null read in `_FLEngine_x64.dll`).
 - Audio and automation clips placed with `add_clip(channel=...)` carried the
   NaN start / end offsets of pattern clips; FL writes -1.0 for them.
 - `flpdiff diff OLD NEW` (the explicit spelling of `flpdiff OLD NEW`) took

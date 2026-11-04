@@ -392,6 +392,10 @@ def test_add_channel_clip_uses_fl_audio_offsets(tmp_path: pathlib.Path):
     assert (audio_clip["start_offset"], audio_clip["end_offset"]) == (-1.0, -1.0)
     assert audio_clip["item_index"] == 11
 
+    # a Sampler (type 0) as a playlist clip crashes FL 20.7: refused
+    with pytest.raises(edit.EditError):
+        edit.add_clip(project, 3, 0, channel=3)
+
 
 def test_markers_and_arrangements_round_trip(tmp_path: pathlib.Path):
     project = pyflp.parse(FL20)
