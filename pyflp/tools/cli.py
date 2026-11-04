@@ -41,6 +41,7 @@ from typing import Sequence
 __all__ = ["main"]
 
 SUBCOMMANDS = (
+    "diff",
     "info",
     "snapshot",
     "assert",
@@ -365,6 +366,9 @@ def _main(argv: Sequence[str] | None = None) -> int:
         from pyflp.tools.bridge import bridge_main
 
         return bridge_main()
+    if command == "diff" and not os.path.exists("diff"):
+        # `flpdiff diff old new` is the explicit spelling of `flpdiff old new`.
+        return _compare(argv[1:])
     return _compare(argv)
 
 

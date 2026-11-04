@@ -298,6 +298,9 @@ def test_cli_exit_codes(capsys: pytest.CaptureFixture[str]):
     assert cli([same, "missing.flp"]) == 2
     assert cli(["info", same, "--format", "json"]) == 0
     assert json.loads(capsys.readouterr().out)["_type"] == "FLPProject"
+    # `diff` is the explicit spelling of the default command
+    assert cli(["diff", same, same, "--no-color"]) == 0
+    assert cli(["diff", same, str(FL25 / "base_one_channel.flp"), "--no-color"]) == 1
 
 
 def test_gitattributes(tmp_path: pathlib.Path):

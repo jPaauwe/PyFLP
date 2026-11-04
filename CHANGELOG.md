@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `flpdiff diff OLD NEW` (the explicit spelling of `flpdiff OLD NEW`) took
+  `diff` for the first file name and exited with a usage error.
 - `pyflp.tools.edit.add_clip` on a project without clips wrote FL 21 sized
   (60 byte) playlist records whatever the version, so FL Studio 20 showed
   one garbled clip and dropped the rest (and FL 2024+ expected 80 bytes).
