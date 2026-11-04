@@ -234,7 +234,7 @@ def test_unparseable_plugin_data_is_kept(tmp_path: pathlib.Path):
     from pyflp.plugin import PluginID
 
     name = "Fruity Wrapper\0".encode("utf-16-le")
-    data = b"\x06" + bytes(40)  # Not a VST plugin "marker"
+    data = b"\x7f" + bytes(40)  # Not a VST plugin "marker"
     events = _version("20.8.4.2576")
     events += bytes([PluginID.InternalName, len(name)]) + name
     events += bytes([PluginID.Data, len(data)]) + data
@@ -314,3 +314,16 @@ def test_internal_name_lookup_is_case_insensitive():
 
     assert get_event_by_internal_name("Fruity Parametric EQ 2") is FruityParametricEQ2Event
     assert get_event_by_internal_name("") is UnknownDataEvent
+
+
+@pytest.mark.parametrize("marker", [6, 8, 9, 10, 11, 12])
+def test_vst_plugin_markers(marker: int):
+    """Markers seen across FL 9 - 2025 share one layout (#116)."""
+    from pyflp.plugin import PluginID, VSTPluginEvent
+
+    name = "Serum".encode()
+    data = struct.pack("<I", marker) + struct.pack("<IQ", 54, len(name)) + name
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        event = VSTPluginEvent(PluginID.Data, data)
+    assert event["events"][0]["data"] == "Serum"

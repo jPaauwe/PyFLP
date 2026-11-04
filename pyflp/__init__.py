@@ -64,6 +64,8 @@ from pyflp.project import VALID_PPQS, FileFormat, Project, ProjectID
 
 __all__ = ["parse", "save", "dumps"]
 
+VST_MARKERS = tuple(bytes([m]) for m in VSTPluginEvent.KNOWN_MARKERS)
+
 FLP_HEADER = struct.Struct("4sIh2H")
 
 if sys.version_info < (3, 11):  # https://github.com/Bobronium/fastenum/issues/2
@@ -182,7 +184,7 @@ def parse(file: pathlib.Path | str | bytes | bytearray | memoryview | BinaryIO) 
                 plug_name = None  # Don't apply it to a later, unnamed plugin
 
                 # FL sometimes stores non-VST data with a "Fruity Wrapper" name (#116)
-                if event_type is VSTPluginEvent and value[:1] not in (b"\x08", b"\x0a"):
+                if event_type is VSTPluginEvent and value[:1] not in VST_MARKERS:
                     event_type = UnknownDataEvent
             else:
                 event_type = UnknownDataEvent

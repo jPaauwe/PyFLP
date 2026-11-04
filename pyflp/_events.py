@@ -559,6 +559,55 @@ class EventTree:
 
         self._recursive(lambda et: et.lst.add(IndexedEvent(rootidx, e)))  # type: ignore
 
+    def _root_index(self, event: AnyEvent) -> int:
+        for ie in self.root.lst:
+            if ie.e is event:
+                return ie.r
+        raise KeyError(event.id)
+
+    def _insert_at_root_index(self, rootidx: int, event: AnyEvent) -> None:
+        for ie in self.root.lst:
+            if ie.r >= rootidx:
+                ie.r += 1
+        self._recursive(lambda et: et.lst.add(IndexedEvent(rootidx, event)))  # type: ignore
+
+    def insert_after(self, anchor: AnyEvent | None, event: AnyEvent) -> None:
+        """Inserts ``event`` right after ``anchor`` in this and all parent trees.
+
+        Args:
+            anchor: An event of the root tree; ``None`` inserts at the start.
+
+        .. versionadded:: 2.3.0
+        """
+        self._insert_at_root_index(0 if anchor is None else self._root_index(anchor) + 1, event)
+
+    def insert_before(self, anchor: AnyEvent, event: AnyEvent) -> None:
+        """Inserts ``event`` right before ``anchor`` in this and all parent trees.
+
+        .. versionadded:: 2.3.0
+        """
+        self._insert_at_root_index(self._root_index(anchor), event)
+
+    def remove_event(self, event: AnyEvent) -> None:
+        """Removes ``event`` (compared by identity) from this and all parent trees.
+
+        .. versionadded:: 2.3.0
+        """
+        rootidx = self._root_index(event)
+        tree: EventTree | None = self
+        while tree is not None:
+            for ie in list(tree.lst):
+                if ie.e is event:
+                    tree.lst.remove(ie)
+            tree = tree.parent
+        if self.root is not self:
+            for ie in list(self.root.lst):
+                if ie.e is event:
+                    self.root.lst.remove(ie)
+        for ie in self.root.lst:
+            if ie.r > rootidx:
+                ie.r -= 1
+
     def pop(self, id: EventEnum, pos: int = 0) -> AnyEvent:
         """Pops the event with ``id`` at ``pos`` in ``self`` and all parents."""
         if id not in self.ids:

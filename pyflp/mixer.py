@@ -18,7 +18,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 from collections import defaultdict
-from typing import Any, DefaultDict, Iterator, NamedTuple, cast
+from typing import ClassVar, Any, DefaultDict, Iterator, NamedTuple, cast
 
 import construct as c
 import construct_typed as ct
@@ -148,11 +148,15 @@ class MixerParamScope(enum.IntEnum):
 class MixerParamsEvent(ListEventBase):
     """Stores parameters of all mixer inserts and their slots.
 
-    ``channel_data`` of every item is a bitfield of the form::
+    ``channel_data`` of every item is of the form::
 
-        (scope << 13) | ((insert & 0x7F) << 6) | (slot & 0x3F)
+        base + (insert << 6) + slot
 
-    where scope is a :class:`MixerParamScope`.
+    Up to FL Studio 20 ``base`` is ``0x2000`` (bit 13 being the "mixer" scope
+    of :class:`MixerParamScope`, #193); FL Studio 2024+ uses ``0x7000``.
+    :attr:`base` is detected from the master insert's volume. Items outside
+    the range of inserts (global or "current" insert parameters) aren't
+    assigned to any insert.
     """
 
     STRUCT = c.GreedyRange(
@@ -165,20 +169,18 @@ class MixerParamsEvent(ListEventBase):
         )
     )
 
+    MAX_INSERTS: ClassVar[int] = 128
+
     def __init__(self, id: Any, data: bytearray) -> None:
         super().__init__(id, data)
         self.items_: DefaultDict[int, _InsertItems] = defaultdict(_InsertItems)
-
-        # Items with any other scope don't belong to an insert and would
-        # overwrite the values of insert 0 / slot 0 (#193). Very old versions
-        # may not store a scope at all, in which case all items are used.
-        has_scopes = any(self.scope(item) == MixerParamScope.Mixer for item in self.data)
+        self.base = self._detect_base()
 
         for item in self.data:
-            if has_scopes and self.scope(item) != MixerParamScope.Mixer:
-                continue
-
             insert_idx = self.insert_index(item)
+            if insert_idx is None:
+                continue  # Global params would overwrite insert 0 / slot 0 (#193)
+
             slot_idx = self.slot_index(item)
             insert = self.items_[insert_idx]
             id = item["id"]
@@ -188,18 +190,33 @@ class MixerParamsEvent(ListEventBase):
             else:
                 insert.own[id] = item
 
-    @staticmethod
-    def scope(item: c.Container[Any]) -> int:
-        """Returns the :class:`MixerParamScope` value of ``item``."""
-        return item["channel_data"] >> 13
+    def _detect_base(self) -> int:
+        volumes = [i["channel_data"] for i in self.data if i["id"] == _MixerParamsID.Volume]
+        if volumes:
+            return min(volumes) & ~0x3F
+        if any(0x2000 <= i["channel_data"] < 0x4000 for i in self.data):
+            return 0x2000
+        return min((i["channel_data"] for i in self.data), default=0) & ~0x3F
 
     @staticmethod
-    def insert_index(item: c.Container[Any]) -> int:
-        return (item["channel_data"] >> 6) & 0x7F
+    def scope(item: c.Container[Any]) -> int:
+        """Returns the :class:`MixerParamScope` value of ``item`` (FL Studio 20 and older)."""
+        return item["channel_data"] >> 13
+
+    def insert_index(self, item: c.Container[Any]) -> int | None:
+        """The insert ``item`` belongs to (0 is master) or ``None``."""
+        offset = item["channel_data"] - self.base
+        if 0 <= offset < self.MAX_INSERTS << 6:
+            return offset >> 6
+        return None
 
     @staticmethod
     def slot_index(item: c.Container[Any]) -> int:
         return item["channel_data"] & 0x3F
+
+    def channel_data(self, insert: int, slot: int = 0) -> int:
+        """Encodes ``channel_data`` for an item of ``insert`` / ``slot``."""
+        return self.base + (insert << 6) + slot
 
 
 @enum.unique
@@ -458,13 +475,36 @@ class Insert(EventModel, ModelCollection[Slot]):
 
     @property
     def iid(self) -> int:
-        """-1 for "current" insert, 0 for master and upto :attr:`Mixer.max_inserts`."""
+        """0 for master, then the insert number shown by FL Studio.
+
+        The last insert is the "current" insert.
+
+        .. versionchanged:: 2.3.0
+
+           Master was -1 previously, i.e. all insert numbers were one less
+           than the ones shown by FL Studio and used by :attr:`Channel.insert`.
+        """
         return self._kw["iid"]
 
     def __iter__(self) -> Iterator[Slot]:
         """Iterator over the effect empty and used slots."""
+        params = self._kw.get("params")  # Not stored for unused inserts in FL 2024+
         for idx, ed in enumerate(self.events.divide(SlotID.Index, *SlotID, *PluginID)):
-            yield Slot(ed, params=self._kw["params"].slots[idx])
+            if params is None:
+                yield Slot(ed)
+            else:
+                yield Slot(ed, params=params.slots[idx])
+
+    @property
+    def routed_to(self) -> list[int]:
+        """Indexes (:attr:`iid`) of the inserts this insert sends its output to.
+
+        .. versionadded:: 2.3.0
+        """
+        if InsertID.Routing not in self.events.ids:
+            return []
+        event = cast(InsertRoutingEvent, self.events.first(InsertID.Routing))
+        return [idx for idx, routed in enumerate(event) if routed]
 
     def __len__(self) -> int:
         try:
@@ -640,14 +680,18 @@ class Mixer(EventModel, ModelCollection[Insert]):
         Args:
             i: An index between 0 to :attr:`Mixer.max_inserts` resembling the
                 one shown by FL Studio or the name of the insert. Use 0 for
-                master and -1 for "current" insert.
+                master and -1 for "current" insert (the last one).
 
         Raises:
             ModelNotFound: An :class:`Insert` with the specifcied name or index
                 isn't found.
         """
-        for idx, insert in enumerate(self):
-            if (isinstance(i, int) and idx == i + 1) or i == insert.name:
+        inserts = list(self)
+        if i == -1 and inserts:
+            return inserts[-1]
+
+        for insert in inserts:
+            if (isinstance(i, int) and insert.iid == i) or i == insert.name:
                 return insert
         raise ModelNotFound(i)
 
@@ -665,9 +709,9 @@ class Mixer(EventModel, ModelCollection[Insert]):
 
         for i, ed in enumerate(self.events.subtrees(select, self.max_inserts)):
             if i in params:
-                yield Insert(ed, iid=i - 1, max_slots=self.max_slots, params=params[i])
+                yield Insert(ed, iid=i, max_slots=self.max_slots, params=params[i])
             else:
-                yield Insert(ed, iid=i - 1, max_slots=self.max_slots)
+                yield Insert(ed, iid=i, max_slots=self.max_slots)
 
     def __len__(self) -> int:
         """Returns the number of inserts present in the project.

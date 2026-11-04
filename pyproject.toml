@@ -42,6 +42,9 @@ dev = [
 ]
 # for docs dependencies see docs/requirements.txt
 
+[project.scripts]
+flpdiff = "pyflp.tools.cli:main"
+
 [project.urls]
 Source = "https://github.com/demberto/PyFLP"
 Changelog = "https://github.com/demberto/PyFLP/blob/master/CHANGELOG.md"
@@ -91,7 +94,7 @@ target-version = "py38"
 line-length = 100
 
 [tool.setuptools]
-packages = ["pyflp"]
+packages = ["pyflp", "pyflp.tools"]
 
 [tool.setuptools_scm]
 write_to = "pyflp/_version.py"

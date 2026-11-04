@@ -344,9 +344,64 @@ pyflp.save(project, "/path/to/save.flp")
 Check the [reference](https://pyflp.rtfd.io/en/latest/reference.html) for a
 complete list of useable features.
 
+## 🧰 Tools: `flpdiff`
+
+PyFLP installs an `flpdiff` command (also `python -m pyflp`), a port of
+[flpdiff](https://github.com/dawhubapp/flpdiff):
+
+```console
+$ flpdiff v1.flp v2.flp
+FLP Diff: v1.flp vs v2.flp
+──────────────────────────
+Summary: 4 changes (1 metadata, 1 patterns, 1 mixer, 1 arrangements, 1 tracks, 2 notes)
+
+Metadata:
+  ~ Tempo decreased from 174.0 to 172.0 BPM
+
+Patterns:
+  ~ Pattern 'Bass #1' modified (2 changes)
+      - Removed G#3 on channel 9 at beat 0
+      + Added A#3 on channel 9 at beat 0
+
+Mixer:
+  ~ Insert 13 (Bass) modified (1 changes)
+      ~ Fruity Parametric EQ 2 in slot 3: frequencies[0] 19661 → 45875
+
+Arrangements:
+  ~ Arrangement 'Arrangement' modified (0 arrangement changes, 1 track changes)
+      ~ Track 'Bass' modified (14 changes)
+          ~ 14 clips of pattern 'Bass #1' moved 1/2 beat later (beats 4→4.5 … 60→60.5)
+```
+
+- `flpdiff A.flp B.flp [--format json] [--verbose] [--plugin-state]` - semantic
+  diff; exits with 0 if identical, 1 if different, 2 on errors.
+- `flpdiff info song.flp [--format text|json|canonical]` - inspect a project.
+- `flpdiff git-setup [--global] [--textconv] [--lfs]` and `flpdiff git-verify` -
+  make `git diff`, `git log -p`, etc. show `*.flp` changes semantically.
+- `flpdiff reorganize in.flp out.flp [--dry-run]` - sort playlist clips into
+  tracks grouped by instrument family, with automation clips nested under the
+  track they control.
+- `flpdiff bridge` - JSON lines in / out, for other programs like MCP servers.
+
+The same features are available as Python APIs in `pyflp.tools`; offline
+editing operations (notes, patterns, playlist clips, mixer, channels,
+plugins) are in `pyflp.tools.edit`:
+
+```py
+from pyflp.tools import edit
+
+project = pyflp.parse("song.flp")
+edit.set_tempo(project, 174)
+bass = edit.create_pattern(project, "Bass", [{"key": "C3", "position": 0, "length": 192}])
+edit.arrange_song(project, [{"bars": 8, "patterns": ["Drums", bass]}])
+pyflp.save(project, "song (edited).flp")
+```
+
 ## 🙏 Acknowledgements
 
 - Monad.FLParser: <https://github.com/monadgroup/FLParser>
+- flpdiff: <https://github.com/dawhubapp/flpdiff> (MIT), the basis of `pyflp.tools`
+  and the source of the FL Studio 2025 test fixtures
 - FLPEdit (repo deleted by [author](https://github.com/roadcrewworker))
 
 ## ✨ Contributors

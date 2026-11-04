@@ -159,11 +159,21 @@ class TrackSync(ct.EnumBase):
     Auto = 6
 
 
+class _Percentage(str):
+    """A percentage string which remembers the exact float it was decoded from."""
+
+    raw: float
+
+
 class HeightAdapter(ct.Adapter[float, float, str, str]):
     def _decode(self, obj: float, *_: Any) -> str:
-        return str(int(obj * 100)) + "%"
+        value = _Percentage(str(int(obj * 100)) + "%")
+        value.raw = obj  # Track heights needn't be whole percentages
+        return value
 
     def _encode(self, obj: str, *_: Any) -> float:
+        if isinstance(obj, _Percentage):
+            return obj.raw
         return int(obj[:-1]) / 100
 
 
@@ -219,8 +229,20 @@ class PLItemBase(ItemModel[PlaylistEvent], ModelReprMixin):
     length = StructProp[int]()
     """PPQ-dependant quantity."""
 
-    muted = StructProp[bool]()
-    """Whether muted / disabled in the playlist. *New in FL Studio v9.0.0*."""
+    MUTED_FLAG = 0x2000
+
+    @property
+    def muted(self) -> bool:
+        """Whether muted / disabled in the playlist. *New in FL Studio v9.0.0*.
+
+        Stored as bit 13 (``0x2000``) of ``item_flags``.
+        """
+        return bool(self["item_flags"] & self.MUTED_FLAG)
+
+    @muted.setter
+    def muted(self, value: bool) -> None:
+        flags = self["item_flags"]
+        self["item_flags"] = flags | self.MUTED_FLAG if value else flags & ~self.MUTED_FLAG
 
     @property
     def offsets(self) -> tuple[float, float]:

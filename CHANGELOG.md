@@ -12,13 +12,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `pyflp.tools`, ported from [flpdiff](https://github.com/dawhubapp/flpdiff):
+  a semantic diff of projects (`tools.diff`), JSON / text / canonical
+  snapshots (`tools.info`), `git diff` integration (`tools.git`), offline
+  editing operations (`tools.edit`), a playlist reorganizer
+  (`tools.reorganize`), a JSON bridge for other programs (`tools.bridge`)
+  and the `flpdiff` command line interface (`python -m pyflp`).
+- `Insert.routed_to` - the inserts an insert sends to.
+- `EventTree.insert_after`, `EventTree.insert_before`, `EventTree.remove_event`.
+- `PLItemBase.muted` (bit `0x2000` of the item flags) can be read and set.
+- FL Studio 2025 test fixtures from flpdiff.
+
 - `pyflp.parse` accepts bytes-like objects and binary streams; `pyflp.save`
   accepts binary streams; new `pyflp.dumps` returns the serialised bytes #155.
 - `FruityParametricEQ2` plugin parser #159.
-- `MixerParamScope` and `MixerParamsEvent.scope/insert_index/slot_index` #193.
+- `MixerParamScope`, `MixerParamsEvent.scope`, `.insert_index`, `.slot_index`,
+  `.channel_data` and `.base` #193.
+
+### Changed
+
+- `Insert.iid` is the insert number shown by FL Studio, i.e. master is 0
+  instead of -1 (and the last insert is "current"); `Mixer[i]` follows it.
 
 ### Fixed
 
+- Mixer parameters (insert volume, pan, stereo separation, EQ and slot
+  enabled / mix) of FL Studio 2024+ projects were read from wrong inserts.
+- VST plugin data of FL Studio 9, 21 and 2024+ (markers 6, 9, 11, 12) wasn't
+  parsed; their name, vendor, etc. were missing #116.
+- Iterating over the slots of an insert without stored parameters raised `KeyError`.
+- Setting `Note.key` to a note name always raised `ValueError`.
+- `PLItemBase.muted` always raised `KeyError`.
+- Track heights which aren't whole percentages changed on save.
 - `TypeError: <enum 'EventEnum'> has no members` on Python 3.11.9+ / 3.12+
   #183 #195 #201.
 - FL Studio 2024 / 2025 projects: 80-byte playlist records #177 #199 #200,

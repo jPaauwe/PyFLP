@@ -385,8 +385,14 @@ class VSTPluginEvent(StructEventBase):
         ),
     ).compile()
 
+    KNOWN_MARKERS: ClassVar[tuple[int, ...]] = (6, 8, 9, 10, 11, 12)
+    """Values of the first byte of :attr:`type` seen across FL Studio 9 to 2025.
+
+    They all share the same layout of sub-events (#116).
+    """
+
     def __init__(self, id: Any, data: bytearray) -> None:
-        if data[0] not in (8, 10):
+        if data[0] not in self.KNOWN_MARKERS:
             warnings.warn(
                 f"VSTPluginEvent: Unknown marker {data[0]} detected. "
                 "Open an issue at https://github.com/demberto/PyFLP/issues "
